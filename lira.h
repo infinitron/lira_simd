@@ -23,6 +23,7 @@
 #include "hwy/highway.h"
 #include "hwy/nanobenchmark.h"
 #include <cmath>
+#include <stdlib.h>
 typedef std::stringstream sstr;
 
 namespace hwy {
@@ -132,6 +133,25 @@ class Ops
         }
     }
 
+    template<class TagType, class T>
+    inline static T reduce(const size_t& t_npixels, const uPtr_F& t_map)
+    {
+        const TagType a, d;
+        auto const sum_vec = Zero(TagType);
+        auto const max_lanes = Constants::get_max_lanes();
+        size_t i = 0;
+
+        //__PAR__
+        for (i = 0; i + max_lanes <= t_npixels; i += max_lanes) {
+            sum_vec = Add(Load(a, t_map.get() + i), sum_vec);
+        }
+
+        if (i < t_npixels) {
+            sum_vec = IfThenElseZero(FirstN(d, t_npixels - i), Load(a, t_map.get() + i)) + sum_vec;
+        }
+
+        return static_cast<T>(GetLanes(SumOfLanes(sum_vec)));
+    }
     inline static void redistribute_counts(PSF& t_psf, CountsMap& t_deblur, CountsMap& t_obs, llikeType& t_llike)
     {
         t_deblur.set_data_zero();
@@ -232,7 +252,7 @@ class Ops
         auto& prob_src = TempDS::m_Fltv["rem_bkg_prob_src"];
 
         //reset the data store
-        std::fill(execParUnseq,prob_src.get(), prob_src.get() + npixels, 0.f);
+        std::fill(execParUnseq, prob_src.get(), prob_src.get() + npixels, 0.f);
 
         //compute the probability for src: src/(bkg_scale * bkg+src)
         //__PAR__
@@ -263,40 +283,190 @@ class Ops
         }
 
         const auto& prod_map = t_exp_map.get_prod_map();
-        const auto& counts_img=t_counts_map.get_img_map();
-        auto&counts_data=t_counts_map.get_data_map();
-        auto &exp_missing_count=TempDS::m_Fltv["exp_missing_count"];
+        const auto& counts_img = t_counts_map.get_img_map();
+        auto& counts_data = t_counts_map.get_data_map();
+        auto& exp_missing_count = TempDS::m_Fltv["exp_missing_count"];
 
         //reset the temp DS
-        std::fill(execParUnseq,exp_missing_count.get(), exp_missing_count.get() + npixels, 0.f);
+        std::fill(execParUnseq, exp_missing_count.get(), exp_missing_count.get() + npixels, 0.f);
 
         //compute expected number of missing count
         //__PAR__
-        for(size_t i=0;i<npixels;i+=max_lanes){
+        for (size_t i = 0; i < npixels; i += max_lanes) {
             Store(
-                NegMulAdd(Load(a,prod_map.get()+i),Load(b,counts_img.get()+i),Load(c,counts_img.get()+i))
-                ,d
-                ,exp_missing_count.get()
-            );
+              NegMulAdd(Load(a, prod_map.get() + i), Load(b, counts_img.get() + i), Load(c, counts_img.get() + i)), d, exp_missing_count.get());
         }
 
         //__PAR__
-        for(size_t i=0;i<npixels;++i){
-            exp_missing_count.get()[i]=rpois(exp_missing_count.get()[i]);
+        for (size_t i = 0; i < npixels; ++i) {
+            exp_missing_count.get()[i] = rpois(exp_missing_count.get()[i]);
         }
 
         //add again
         //__PAR__
-        for(size_t i=0;i<npixels;i+=max_lanes){
-            Store(Load(a,counts_data.get()+i)+Load(b,exp_missing_count.get()+i),d,counts_data.get()+i);
+        for (size_t i = 0; i < npixels; i += max_lanes) {
+            Store(Load(a, counts_data.get() + i) + Load(b, exp_missing_count.get() + i), d, counts_data.get() + i);
         }
-
     }
 
-    inline static void check_monotone_convergence(){}
+    inline static void check_monotone_convergence() {}
 
+    inline static float update_image_ms(AsyncFileIO& t_out_files, const ExpMap& t_expmap, CountsMap& t_src, MultiScaleMap& t_ms)
+    {
+        auto dim = t_src.get_dim();
+        auto spin_row = Utils::binary_roulette(dim);
+        auto spin_col = Utils::binary_roulette(dim);
 
+        //_____FILE IO_____//
+
+        //copy src data into level 0
+        t_src.get_spin_data(t_ms.get_level(0).get_map(), spin_row, spin_col);
+
+        //compute_aggreggations
+        t_ms.compute_cascade_agregations();
+    }
+
+    inline static void update_alpha_ms(AsyncFileIO& t_out_file, MultiScaleMap& t_ms)
+    {
+        float lower, //lower
+          middle,    //middle
+          upper,     //upper
+          dl_lower,  //dl
+          dl_upper,  //dl
+          dl_middle; //dl
+
+        auto nlevels = t_ms.get_nlevels();
+
+        for (auto level = 0; level < nlevels; ++level) {
+            //initialize lower and upper
+            lower = 1.0f;
+
+            while (Ops::dlpost_lalpha(lower, t_ms, level) < 0)
+                lower /= 2.0f;
+
+            dl_lower = Ops::dlpost_lalpha(lower, t_ms, level);
+
+            upper = lower * 2.0f;
+
+            while (Ops::dlpost_lalpha(upper, t_ms, level) < 0)
+                upper /= 2.0f;
+
+            dl_upper = Ops::dlpost_lalpha(upper, t_ms, level);
+
+            while ((upper - lower) > Constants::convg_bisect) {
+                middle = (lower + upper) / 2.0f;
+                dl_middle = Ops::dlpost_lalpha(middle, t_ms, level);
+
+                if (dl_middle > 0) {
+                    lower = middle;
+                    dl_lower = dl_middle;
+                } else {
+                    upper = middle;
+                    dl_upper = dl_middle;
+                }
+            } //bisect loop
+            t_ms.set_alpha(level, update_alpha_ms_MH((upper + lower) / 2.0f, t_ms, level));
+
+            //_____FILE IO_____//
+        }
+    }
+
+    inline static float update_alpha_ms_MH(const float& t_prop_mean, MultiScaleMap& t_ms, const size_t& t_level)
+    {
+        float proposal, //
+          current,      //
+          prop_sd,      //
+          lg_prop_mn,   //
+          log_ratio;    //
+
+        current = t_ms.get_alpha(t_level);
+        prop_sd = ddlpost_lalpha(t_prop_mean, t_ms, t_level);
+        if (t_prop_mean * sqrt(prop_sd) < 1e-10) {
+            throw(InconsistentData("Infinite MH proposal variance in update_alpha_ms_MH"));
+        } else
+            prop_sd = Constants::MH_sd_inflate / sqrt(prop_sd);
+
+        for (auto i = 0; i < Constants::MH_iter; ++i) {
+            proposal = rlnorm(lg_prop_mn, prop_sd); /* log normal proposal dist'n */
+            proposal = rlnorm(lg_prop_mn, prop_sd); /* log normal proposal dist'n */
+            log_ratio =
+              lpost_lalpha(proposal, t_ms, t_level) - lpost_lalpha(current, t_ms, t_level) + dlnorm(current, lg_prop_mn, prop_sd, 1) - dlnorm(proposal, lg_prop_mn, prop_sd, 1);
+            if (runif(0, 1) < exp(log_ratio))
+                current = proposal;
+        }
+        return (current);
+    };
+
+    inline static float ddlpost_lalpha(float t_alpha, MultiScaleMap& t_ms, size_t level)
+    {
+    }
+
+    template<typename D, int Pow4>
+    inline static float dnlpost_alpha(D t_dfunc, float& t_alpha, MultiScaleMap& t_ms, const size_t& t_level)
+    {
+        auto factor = float(pow(4, Pow4));
+        //D=digamma=>dlpost_alpha
+        //D=trigamma=>ddlpost_alpha
+
+        auto dim = t_ms.get_level(t_level).get_dim();
+        float dlogpost = dim * dim * (Fac1 * t_dfunc(4.0 * t_alpha) - 4.0 * t_dfunc(t_alpha));
+
+        dlogpost += t_ms.get_level(t_level).get_ngamma_sum<f_digamma()>(t_alpha) - factor * t_ms.get_level(t_level + 1).get_ngamma_sum<f_digamma()>(4 * t_alpha) + t_ms.get_log_prior(t_alpha, Pow4);
+    }
+
+    inline static float dlpost_lalpha(float t_alpha, MultiScaleMap& t_ms, const size_t& t_level)
+    {
+        return dnlpost_alpha<f_digamma, 1>(f_digamma(), t_alpha, t_ms, t_level) * t_alpha + 1.f;
+    }
+
+    inline static float ddlpost_lalpha(float& t_alpha, MultiScaleMap& t_ms, const size_t& t_level)
+    {
+        return dnlpost_alpha<f_trigamma, 1>(f_trigamma(), t_alpha, t_ms, t_level) * t_alpha + dnlpost_alpha<f_trigamma, 2>(f_trigamma(), t_alpha, t_ms, t_level) * t_alpha * t_alpha;
+    }
+
+    inline static float lpost_lalpha(float& t_alpha, MultiScaleMap& t_ms, const size_t& t_level)
+    {
+        return dnlpost_alpha<f_lgamma, 0>(f_lgamma(), t_alpha, t_ms, t_level) + log(t_alpha);
+    }
 };
+
+class AsyncFileIO
+{
+  public:
+    AsyncFileIO() {}
+};
+
+class Utils
+{
+  public:
+    inline static size_t get_power_2(size_t i)
+    {
+        if ((i & (i - 1)) == 0) {
+            return Constants::MultiplyDeBruijnBitPosition2[(uint32_t)(i * 0x077CB531U) >> 27];
+        }
+    }
+
+    inline static size_t binary_roulette(size_t dim)
+    {
+        return (size_t)dim * runif(0, 1);
+    }
+};
+
+struct f_digamma
+{
+    float operator()(float& v) { digamma(v); }
+};
+
+struct f_trigamma
+{
+    float operator()(float& v) { trigamma(v); }
+};
+
+struct f_lgamma
+{
+    float operator()(float& v) { lgammafn(v); }
+};
+
 class Constants
 {
   public:
@@ -309,6 +479,8 @@ class Constants
 ;
     // clang-format on
     inline static const std::map<MapType, std::string> map_names = { { MapType::PSF, "PSF" }, { MapType::EXP, "Exposure" }, { MapType::COUNTS, "Counts" } };
+
+    inline static const float convg_bisect{ 1e-8 };
     // inline static const size_t get_lanes()
     // {
     //     ScalableTag<float> d;
@@ -320,6 +492,9 @@ class Constants
     {
         return Lanes(d);
     };
+    inline static const float MH_sd_inflate{ 2.0 };
+    inline static const int MH_iter{ 10 };
+    inline static const int NR_END{ 1 };
 
   protected:
 };
@@ -335,6 +510,12 @@ enum class CountsMapDataType
 {
     DATA,
     IMG
+};
+
+enum class DFunc
+{
+    DIGAMMA,
+    TRIGAMMA
 };
 
 class IncorrectDimensions : virtual public std::exception
@@ -405,6 +586,28 @@ class InconsistentData : virtual public std::exception
     }
 };
 
+class InvalidParams : virtual public std::exception
+{
+  protected:
+    std::stringstream m_err_stream;
+
+  public:
+    explicit InvalidParams(const std::string& t_msg)
+    {
+        m_err_stream << "Invalid parameters: " << t_msg;
+    };
+
+    explicit InvalidParams(const size_t& spin_row, const size_t& spin_col)
+    {
+        m_err_stream << "Invalid params: The spins can only be 0 or 1. spin_row(" << spin_row << ") spin_col(" << spin_col << ")\n";
+    }
+
+    virtual const char* what() const throw()
+    {
+        return m_err_stream.str().c_str();
+    }
+};
+
 template<typename T>
 class ImgMap
 {
@@ -422,7 +625,7 @@ class ImgMap
         if (m_map_type != MapType::PSF) {
             //http://www.graphics.stanford.edu/~seander/bithacks.html#IntegerLogDeBruijn
             //fancy way to compute the power of two
-            m_max_levels = Constants::MultiplyDeBruijnBitPosition2[static_cast<uint32_t>(m_nrows * 0x077CB531U) >> 27];
+            m_max_levels = Utils::get_power_2(m_nrows);
         }
     }
 
@@ -541,7 +744,7 @@ class PSF : public ImgMap<PSF>
 
         std::copy(execParUnseq, m_mat_holder, m_mat_holder + m_npixels, m_mat.get());
         //std::copy(execParUnseq, m_mat_holder, m_mat_holder + m_npixels, m_rmat.get());
-        std::reverse_copy(execParUnseq, m_mat_holder,m_mat_holder+m_npixels,m_rmat.get());
+        std::reverse_copy(execParUnseq, m_mat_holder, m_mat_holder + m_npixels, m_rmat.get());
         std::fill(execParUnseq, m_mat.get() + m_orig_size, m_mat.get() + m_aligned_size, 0.f);
 
         //TODO--compute L,R,U,D
@@ -605,7 +808,7 @@ class ExpMap : public ImgMap<ExpMap>
         std::copy(execParUnseq, m_map.get(), m_map.get() + n_pixels, m_prod.get());
     }
 
-    const uPtr_F& get_prod_map ()const
+    const uPtr_F& get_prod_map() const
     {
         return m_prod;
     }
@@ -727,6 +930,42 @@ class CountsMap : public ImgMap<CountsMap>
         }
     }
 
+    void init_data_spin_views()
+    {
+        if (m_is_spin_views_set)
+            return;
+
+        m_is_spin_views_set = TRUE;
+        for (int spin_row = 0; spin_row < 2; ++spin_row) {
+            for (int spin_col = 0; spin_col < 2; ++spin_col) {
+                auto pair_key = std::pair<int, int>(spin_row, spin_col);
+                m_spin_views[pair_key] = AllocateAligned<float*>(m_npixels);
+                auto& spin_view_ref = m_spin_views[pair_key];
+
+                //set the view
+                for (size_t row = 0; row < m_nrows; ++row) {
+                    for (size_t col = 0; col < m_ncols; ++col) {
+                        spin_view_ref.get()[row * m_nrows + m_ncols] = &m_data.get()[((row + spin_row) % m_nrows) * m_nrows + (col + spin_col) % m_ncols];
+                    }
+                }
+            }
+        }
+    }
+
+    void get_spin_data(uPtr_F& t_out, size_t spin_row, size_t spin_col)
+    {
+        auto pair_key = std::pair<int, int>(spin_row, spin_col);
+        if (m_spin_views.count(pair_key) == 0)
+            throw(InvalidParams(spin_row, spin_col));
+
+        const auto& data_spin_ref = m_spin_views[pair_key];
+
+        //__PARALLEL__
+        for (size_t i = 0; i < m_npixels; ++i) {
+            t_out.get()[i] = *data_spin_ref.get()[i];
+        }
+    }
+
     //returns a const ref to the warped image map. This will be used to redisribute counts (i.e., convolving the map with the PSF)
     const uPtr_F& get_warped_img()
     {
@@ -768,6 +1007,9 @@ class CountsMap : public ImgMap<CountsMap>
     bool m_is_wdata_set{ false };
     size_t m_wmap_dim;
     size_t m_pad_dim{ 0 };
+    //std::vector<uPtr_Fv> m_4spin_views;
+    std::map<std::pair<int, int>, uPtr_Fv> m_spin_views; //holds references to the map view for different row/col spin values
+    bool m_is_spin_views_set{ false };
 
   private:
     const float* m_map_holder;
@@ -789,11 +1031,13 @@ class MultiScaleLevelMap
       , m_npixels(pow(t_dimension, 2))
       , m_npixels_agg(m_npixels / 4)
       , m_current_map(AllocateAligned<float>(m_npixels))
+      , m_temp_storage(AllocateAligned<float>(m_npixels))
       , m_alpha(t_alpha)
     {
         /*, m_row_interleaved_sum(AllocateAligned<float>(m_half_npixels)), m_row_interleaved_A(AllocateAligned<float>(m_half_npixels)), m_row_interleaved_B(AllocateAligned<float>(m_npixels_agg)), m_col_interleaved_A(AllocateAligned<float>(m_npixels_agg)), m_row_to_col_interleaved_flag(m_half_npixels, TRUE), m_row_to_col_indices(m_half_npixels, 0), m_row_interleaved_indices(m_half_npixels, 0), m_sub_npixels(m_npixels / 4), m_half_npixels(m_npixels / 2), m_agg_indices(m_npixels_agg, 0), m_curr_map_agg_indices(m_npixels, 0), m_curr_map_indices(m_npixels, 0),, m_agg_norm_map(AllocateAligned<float>(m_npixels))*/
 
-        std::fill(m_current_map.get(), m_current_map.get() + m_npixels, 0.f);
+        std::fill(execParUnseq, m_current_map.get(), m_current_map.get() + m_npixels, 0.f);
+        std::fill(execParUnseq, m_temp_storage.get(), m_temp_storage.get() + m_npixels, 0.f);
         //std::fill(m_agg_norm_map.get(), m_agg_norm_map.get() + m_npixels, 0.f);
         /*std::fill(m_row_interleaved_sum.get(), m_row_interleaved_sum.get() + m_half_npixels, 0.f);
                 std::fill(m_row_interleaved_A.get(), m_row_interleaved_A.get() + m_half_npixels, 0.f);
@@ -846,7 +1090,7 @@ class MultiScaleLevelMap
         for (auto i = 0; i < 4; i++) {
             m_4sub_maps_ref.push_back(AllocateAligned<float*>(m_npixels_agg));
         }
-        //assign references to the view and copy when necesssary
+        //assign references to the view and copy on-demand
         for (size_t i = 0; i < m_npixels_agg; ++i) {
             auto main = i * 2 + i / m_dimension_agg * m_dimension;
             m_4sub_maps_ref[0].get()[i] = &m_current_map.get()[main];
@@ -880,7 +1124,7 @@ class MultiScaleLevelMap
         return m_current_map;
     }
 
-    void get_aggregate(uPtr_F& t_out_data_map, bool t_norm = TRUE)
+    void get_aggregate(uPtr_F& t_out_data_map, bool t_norm = FALSE)
     { //set the aggregate to t_data_map. Contains m_npixels/4 pixels
 
         if (m_npixels_agg / 4 >= Constants::get_max_lanes()) {
@@ -897,6 +1141,17 @@ class MultiScaleLevelMap
         }
     }
 
+    template<typename D>
+    float get_ngamma_sum(D d_func, float factor) const
+    {
+        //__PAR__
+        for (size_t i = 0; i < m_npixels; ++i) {
+            m_temp_storage.get()[i] = d_func(m_current_map.get()[i] + factor);
+        }
+
+        return Ops::reduce<tagF, float>(m_npixels, m_temp_storage);
+    }
+
     float get_level_log_prior()
     {
         float log_prior = std::transform_reduce(
@@ -905,12 +1160,18 @@ class MultiScaleLevelMap
         log_prior *= m_alpha - 1;
     }
 
+    size_t get_dim()
+    {
+        return m_dimension;
+    }
+
   protected:
     // uPtr_F m_row_interleaved_A;   //even rows of the current map
     // uPtr_F m_row_interleaved_B;   //odd rows of the current map
     // uPtr_F m_col_interleaved_A;   //even colums of the row interleaved sum
     // uPtr_F m_col_interleaved_B;   //odd rows of the row interleaved sum
     uPtr_F m_current_map; //image of the current level
+    uPtr_F m_temp_storage;
     //uPtr_F m_agg_norm_map; //
     //uPtr_F m_row_interleaved_sum; // the sum of even and odd rows. Has a size of~ dim/2 x dim
     /* Divide the current map into 4 sub maps. Their sum would be the aggregate matrix. Only do it if m_npixels/4 > max_lanes */
@@ -961,6 +1222,7 @@ class MultiScaleLevelMap
 
     void update_curr_map()
     {
+        //__PAR__
         for (size_t i = 0; i < m_npixels_agg; i++) {
             *m_4sub_maps_ref[0].get()[i] = m_curr_sub_maps[0].get()[i];
             *m_4sub_maps_ref[1].get()[i] = m_curr_sub_maps[1].get()[i];
@@ -1023,11 +1285,66 @@ class MultiScaleLevelMap
 class MultiScaleMap
 {
   public:
-    MultiScaleMap(CountsMap& t_counts_map)
+    MultiScaleMap(CountsMap& t_obs)
     {
+
+        //init alpha vector
+        for (auto i = 0; i < m_nlevels; ++i)
+            m_alpha.push_back(0.f);
+    }
+
+    MultiScaleLevelMap& get_level(int level)
+    {
+        return m_level_maps[level];
+    }
+
+    size_t get_nlevels()
+    {
+        return m_nlevels;
+    }
+
+    void set_alpha(int level, float t_value)
+    {
+        if (level > m_nlevels)
+            throw(InvalidParams(std::string("The input level is greater than max level. Input level: ") + std::to_string(m_nlevels)));
+        m_alpha[level] = t_value;
+    }
+
+    float get_alpha(int level)
+    {
+        if (level > m_nlevels)
+            throw(InvalidParams(std::string("The input level is greater than max level. Input level: ") + std::to_string(m_nlevels)));
+        return m_alpha[level];
+    }
+
+    void compute_cascade_agregations()
+    {
+        for (size_t level = 1; level <= m_nlevels; ++level) {
+            auto& level_map_ref_cur = m_level_maps[level];
+            auto& level_map_prev = m_level_maps[level - 1];
+
+            level_map_prev.get_aggregate(level_map_ref_cur.get_map(), FALSE); //aggregate without normalizing
+        }
+    }
+
+    float get_log_prior(float t_alpha, int power4)
+    {
+        if (power4 == 0) {
+            return al_kap1 * log(t_alpha) + al_kap2 * pow(t_alpha, al_kap3);
+        }
+        if (power4 == 1) {
+            return al_kap1 / t_alpha + al_kap2 * al_kap3 * pow(t_alpha, al_kap3 - 1.0);
+        }
+        if (power4 == 2) {
+            al_kap1 / pow(t_alpha, 2.f) - al_kap2* al_kap3*(al_kap3 - 1.f) * pow(t_alpha, al_kap3 - 2.0f);
+        }
     }
 
   protected:
+    size_t m_nlevels;
+    std::vector<MultiScaleLevelMap> m_level_maps;
+    float al_kap1, al_kap2, al_kap3;
+    std::vector<float> m_alpha;
     //std::vector
 };
 
