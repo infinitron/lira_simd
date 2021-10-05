@@ -202,7 +202,7 @@ class Ops
                     t_llike.cur += obs_map.get()[deblur_start_idx] * log(sum);
                 t_llike.cur -= sum;
 
-                if (std::fpclassify(sum) == FP_ZERO && obs_map.get()[deblur_start_idx] > 0) {
+                if (sum == 0.0 && obs_map.get()[deblur_start_idx] > 0) {
                     throw(InconsistentData(row, col)); //psf doesn't allow data in this pixel
                 }
 
@@ -316,14 +316,39 @@ class Ops
         auto dim = t_src.get_dim();
         auto spin_row = Utils::binary_roulette(dim);
         auto spin_col = Utils::binary_roulette(dim);
+        float log_prior = 0.0f;
 
-        //_____FILE IO_____//
+        //_____FILE_IO_____//
 
         //copy src data into level 0
         t_src.get_spin_data(t_ms.get_level(0).get_map(), spin_row, spin_col);
 
         //compute_aggreggations
         t_ms.compute_cascade_agregations();
+
+        //update alpha
+        update_alpha_ms(t_out_files, t_ms);
+
+        //compute proportions
+        t_ms.compute_cascade_proportions();
+
+        //update the expected total count
+        t_ms.set_total_exp_count();
+
+        //_____FILE_IO_____//
+
+        //compute log prior
+        log_prior = (t_ms.get_ttlcnt_pr() - 1) * log(t_ms.get_max_agg_value()) - t_ms.get_ttlcnt_exp() * t_ms.get_max_agg_value();
+
+        log_prior += t_ms.get_log_prior_n_levels();
+
+        //compute the log scale image
+        t_ms.compute_cascade_log_scale_images();
+
+        //store new image in src.img
+        t_src.set_spin_img(t_ms.get_level(0).get_map(),spin_row,spin_col);
+
+        return log_prior;
     }
 
     inline static void update_alpha_ms(AsyncFileIO& t_out_file, MultiScaleMap& t_ms)
@@ -409,9 +434,9 @@ class Ops
         //D=trigamma=>ddlpost_alpha
 
         auto dim = t_ms.get_level(t_level).get_dim();
-        float dlogpost = dim * dim * (Fac1 * t_dfunc(4.0 * t_alpha) - 4.0 * t_dfunc(t_alpha));
+        float dlogpost = dim * dim * (factor * t_dfunc(4.0 * t_alpha) - 4.0 * t_dfunc(t_alpha));
 
-        dlogpost += t_ms.get_level(t_level).get_ngamma_sum<f_digamma()>(t_alpha) - factor * t_ms.get_level(t_level + 1).get_ngamma_sum<f_digamma()>(4 * t_alpha) + t_ms.get_log_prior(t_alpha, Pow4);
+        dlogpost += t_ms.get_level(t_level).get_ngamma_sum<D>(D(), t_alpha) - factor * t_ms.get_level(t_level + 1).get_ngamma_sum<D>(D(), 4 * t_alpha) + t_ms.get_log_prior(t_alpha, Pow4);
     }
 
     inline static float dlpost_lalpha(float t_alpha, MultiScaleMap& t_ms, const size_t& t_level)
@@ -454,17 +479,21 @@ class Utils
 
 struct f_digamma
 {
-    float operator()(float& v) { digamma(v); }
+    float operator()(float& v) { return digamma(v); }
 };
 
 struct f_trigamma
 {
-    float operator()(float& v) { trigamma(v); }
+    float operator()(float& v) { return trigamma(v); }
 };
 
 struct f_lgamma
 {
-    float operator()(float& v) { lgammafn(v); }
+    float operator()(float& v) { return lgammafn(v); }
+};
+
+struct f_vadd{
+    vecF operator()(vecF &t_a,vecF &t_b){return Add(t_a,t_b);}
 };
 
 class Constants
@@ -495,6 +524,7 @@ class Constants
     inline static const float MH_sd_inflate{ 2.0 };
     inline static const int MH_iter{ 10 };
     inline static const int NR_END{ 1 };
+    inline static const int MAX_ITER_WHILE{ 100 };
 
   protected:
 };
@@ -555,7 +585,8 @@ class IncompleteInitialization : virtual public std::exception
 
     explicit IncompleteInitialization(const std::string& t_map_name, const std::string& t_msg)
     {
-        m_err_stream << "Incomplete initialization in the map " << t_map_name << '\n';
+        m_err_stream << "Incomplete initialization in the map " << t_map_name << '\n'
+                     << t_msg;
     }
 
     virtual const char* what() const throw()
@@ -651,7 +682,7 @@ class ImgMap
     void check_sizes()
     {
         if (m_nrows != m_ncols) {
-            throw(IncorrectDimensions(m_nrows, m_ncols, m_map_name, TRUE));
+            throw(IncorrectDimensions(m_nrows, m_ncols, m_map_name, true));
         }
 
         if (m_map_type == MapType::PSF && m_nrows % 2 == 0) {
@@ -871,7 +902,7 @@ class CountsMap : public ImgMap<CountsMap>
 
     /*void set_warped_img(const WrappedIndexMap& t_w_idx_map)
     {
-        m_is_wimg_set = TRUE;
+        m_is_wimg_set = true;
         m_pad_dim = t_w_idx_map.get_pad_dim();
         m_npixels_wmap = t_w_idx_map.get_npixels();
         m_wmap_dim = t_w_idx_map.get_dim();
@@ -906,7 +937,7 @@ class CountsMap : public ImgMap<CountsMap>
         }
 
         if (t_type == CountsMapDataType::IMG) {
-            m_is_wimg_set = TRUE;
+            m_is_wimg_set = true;
             if (m_warped_img_ref == nullptr) {
                 m_warped_img_ref = AllocateAligned<float*>(m_npixels_wmap);
             }
@@ -917,7 +948,7 @@ class CountsMap : public ImgMap<CountsMap>
                 m_warped_img_ref.get()[i] = &m_img.get()[i];
             }
         } else {
-            m_is_wdata_set = TRUE;
+            m_is_wdata_set = true;
             if (m_warped_data_ref == nullptr) {
                 m_warped_data_ref = AllocateAligned<float*>(m_npixels_wmap);
             }
@@ -932,15 +963,15 @@ class CountsMap : public ImgMap<CountsMap>
 
     void init_data_spin_views()
     {
-        if (m_is_spin_views_set)
+        if (m_is_spin_data_views_set)
             return;
 
-        m_is_spin_views_set = TRUE;
+        m_is_spin_data_views_set = true;
         for (int spin_row = 0; spin_row < 2; ++spin_row) {
             for (int spin_col = 0; spin_col < 2; ++spin_col) {
                 auto pair_key = std::pair<int, int>(spin_row, spin_col);
-                m_spin_views[pair_key] = AllocateAligned<float*>(m_npixels);
-                auto& spin_view_ref = m_spin_views[pair_key];
+                m_spin_data_views[pair_key] = AllocateAligned<float*>(m_npixels);
+                auto& spin_view_ref = m_spin_data_views[pair_key];
 
                 //set the view
                 for (size_t row = 0; row < m_nrows; ++row) {
@@ -952,17 +983,53 @@ class CountsMap : public ImgMap<CountsMap>
         }
     }
 
+    void init_img_spin_views(){
+        if (m_is_spin_img_views_set)
+            return;
+
+        m_is_spin_img_views_set = true;
+        for (int spin_row = 0; spin_row < 2; ++spin_row) {
+            for (int spin_col = 0; spin_col < 2; ++spin_col) {
+                auto pair_key = std::pair<int, int>(spin_row, spin_col);
+                m_spin_img_views[pair_key] = AllocateAligned<float*>(m_npixels);
+                auto& spin_view_ref = m_spin_img_views[pair_key];
+
+                //set the view
+                for (size_t row = 0; row < m_nrows; ++row) {
+                    for (size_t col = 0; col < m_ncols; ++col) {
+                        spin_view_ref.get()[row * m_nrows + m_ncols] = &m_img.get()[((row + spin_row) % m_nrows) * m_nrows + (col + spin_col) % m_ncols];
+                    }
+                }
+            }
+        }
+    }
+
+
+
     void get_spin_data(uPtr_F& t_out, size_t spin_row, size_t spin_col)
     {
         auto pair_key = std::pair<int, int>(spin_row, spin_col);
-        if (m_spin_views.count(pair_key) == 0)
+        if (m_spin_data_views.count(pair_key) == 0)
             throw(InvalidParams(spin_row, spin_col));
 
-        const auto& data_spin_ref = m_spin_views[pair_key];
+        const auto& data_spin_ref = m_spin_data_views[pair_key];
 
-        //__PARALLEL__
+        //__PAR__
         for (size_t i = 0; i < m_npixels; ++i) {
             t_out.get()[i] = *data_spin_ref.get()[i];
+        }
+    }
+
+    void set_spin_img(uPtr_F &t_in_map,size_t spin_row,size_t spin_col){
+        auto pair_key = std::pair<int, int>(spin_row, spin_col);
+        if (m_spin_img_views.count(pair_key) == 0)
+            throw(InvalidParams(spin_row, spin_col));
+
+        const auto& img_spin_ref = m_spin_img_views[pair_key];
+
+        //__PAR__
+        for(size_t i=0;i<m_npixels;++i){
+            *img_spin_ref.get()[i]=t_in_map.get()[i];
         }
     }
 
@@ -1008,8 +1075,10 @@ class CountsMap : public ImgMap<CountsMap>
     size_t m_wmap_dim;
     size_t m_pad_dim{ 0 };
     //std::vector<uPtr_Fv> m_4spin_views;
-    std::map<std::pair<int, int>, uPtr_Fv> m_spin_views; //holds references to the map view for different row/col spin values
-    bool m_is_spin_views_set{ false };
+    std::map<std::pair<int, int>, uPtr_Fv> m_spin_data_views; //holds references to the data map view for different row/col spin values
+    std::map<std::pair<int, int>, uPtr_Fv> m_spin_img_views;
+    bool m_is_spin_data_views_set{ false };
+    bool m_is_spin_img_views_set{ false };
 
   private:
     const float* m_map_holder;
@@ -1034,7 +1103,7 @@ class MultiScaleLevelMap
       , m_temp_storage(AllocateAligned<float>(m_npixels))
       , m_alpha(t_alpha)
     {
-        /*, m_row_interleaved_sum(AllocateAligned<float>(m_half_npixels)), m_row_interleaved_A(AllocateAligned<float>(m_half_npixels)), m_row_interleaved_B(AllocateAligned<float>(m_npixels_agg)), m_col_interleaved_A(AllocateAligned<float>(m_npixels_agg)), m_row_to_col_interleaved_flag(m_half_npixels, TRUE), m_row_to_col_indices(m_half_npixels, 0), m_row_interleaved_indices(m_half_npixels, 0), m_sub_npixels(m_npixels / 4), m_half_npixels(m_npixels / 2), m_agg_indices(m_npixels_agg, 0), m_curr_map_agg_indices(m_npixels, 0), m_curr_map_indices(m_npixels, 0),, m_agg_norm_map(AllocateAligned<float>(m_npixels))*/
+        /*, m_row_interleaved_sum(AllocateAligned<float>(m_half_npixels)), m_row_interleaved_A(AllocateAligned<float>(m_half_npixels)), m_row_interleaved_B(AllocateAligned<float>(m_npixels_agg)), m_col_interleaved_A(AllocateAligned<float>(m_npixels_agg)), m_row_to_col_interleaved_flag(m_half_npixels, true), m_row_to_col_indices(m_half_npixels, 0), m_row_interleaved_indices(m_half_npixels, 0), m_sub_npixels(m_npixels / 4), m_half_npixels(m_npixels / 2), m_agg_indices(m_npixels_agg, 0), m_curr_map_agg_indices(m_npixels, 0), m_curr_map_indices(m_npixels, 0),, m_agg_norm_map(AllocateAligned<float>(m_npixels))*/
 
         std::fill(execParUnseq, m_current_map.get(), m_current_map.get() + m_npixels, 0.f);
         std::fill(execParUnseq, m_temp_storage.get(), m_temp_storage.get() + m_npixels, 0.f);
@@ -1049,7 +1118,7 @@ class MultiScaleLevelMap
         // size_t counter = 0;
         // std::for_each(m_row_to_col_interleaved_flag.begin(), m_row_to_col_interleaved_flag.end(), [](auto &i)
         //               {
-        //                   i = counter % 2 == 0 ? TRUE : FALSE;
+        //                   i = counter % 2 == 0 ? true : FALSE;
         //                   ++counter;
         //               });
         // std::for_each(m_row_to_col_indices.begin(), m_row_to_col_indices.end(), [](auto &i)
@@ -1111,6 +1180,8 @@ class MultiScaleLevelMap
 
     void set_sub_maps()
     {
+        if (m_dimension == 1)
+            return;
         for (size_t i = 0; i < m_npixels_agg; i++) {
             m_curr_sub_maps[0].get()[i] = *m_4sub_maps_ref[0].get()[i];
             m_curr_sub_maps[1].get()[i] = *m_4sub_maps_ref[1].get()[i];
@@ -1126,8 +1197,11 @@ class MultiScaleLevelMap
 
     void get_aggregate(uPtr_F& t_out_data_map, bool t_norm = FALSE)
     { //set the aggregate to t_data_map. Contains m_npixels/4 pixels
+        if (m_dimension == 1) {
+            throw(InvalidParams("There is no aggregate level below a 1x1 image!"));
+        }
 
-        if (m_npixels_agg / 4 >= Constants::get_max_lanes()) {
+        if (m_npixels_agg >= Constants::get_max_lanes()) {
             //compute on lanes
             add_4(m_npixels_agg, m_curr_sub_maps[0], m_curr_sub_maps[1], m_curr_sub_maps[2], m_curr_sub_maps[3], t_out_data_map);
         } else {
@@ -1152,12 +1226,92 @@ class MultiScaleLevelMap
         return Ops::reduce<tagF, float>(m_npixels, m_temp_storage);
     }
 
-    float get_level_log_prior()
+    void recompute_pixels()
     {
-        float log_prior = std::transform_reduce(
-          m_current_map.get(), m_current_map.get() + m_npixels, 0.f, [](const auto& i) { return log(i); }, std::plus<float>());
+        //recompute on each submap
+        for (auto& map : m_curr_sub_maps) {
+            std::transform(execParUnseq, map.get(), map.get() + m_npixels_agg, map.get(), [&](const auto& i) {
+                return rgamma(i + m_alpha, 1.f);
+            });
+        }
 
-        log_prior *= m_alpha - 1;
+        //compute the aggregate
+        std::fill(execParUnseq, m_temp_storage.get(), m_temp_storage.get() + m_npixels, 0.f);
+        get_aggregate(m_temp_storage, true);
+
+        //check for zeros
+        //__PAR__
+        for (size_t i = 0; i < m_npixels_agg; ++i) {
+            if (std::fpclassify(m_temp_storage.get()[i]) == FP_ZERO) {
+                float sum = 0.f;
+                int counter = 0;
+                while (sum == 0.0) {
+
+                    for (auto& map : m_curr_sub_maps) {
+                        map.get()[i] = rgamma(map.get()[i] + m_alpha, 1);
+                        sum += map.get()[i];
+                    }
+                    ++counter;
+                    if (counter > Constants::MAX_ITER_WHILE) {
+                        throw(InconsistentData("Perhaps the number of input smoothing parameters is less than n (where nrows=2^n)?"));
+                    }
+                }
+                m_temp_storage.get()[i] = sum;
+            }
+        }
+
+        normalize_curr_map(m_temp_storage);
+    };
+
+    void set_total_exp_count(const float& ttlcnt_pr, const float& ttlcnt_exp)
+    {
+        if (m_dimension != 1) {
+            throw(InvalidParams("Total exp count can only be set to the final level."));
+        }
+        m_current_map.get()[0] = rgamma(m_current_map.get()[0] + ttlcnt_pr, 1 / (1 + ttlcnt_exp));
+    }
+
+    float get_level_log_prior(bool t_flag = true)
+    {
+        //flag=true=>for use in comp_ms_prior
+        //flag=FALSE=>for use in update_ms--log transforms the pixels
+        float log_prior = 0.f;
+        if (t_flag) {
+            log_prior = std::transform_reduce(
+              m_current_map.get(), m_current_map.get() + m_npixels, 0.f, [](const auto& i) { return log(i); }, std::plus<float>());
+
+            return log_prior *= (m_alpha - 1);
+        } else {
+            //log transform all the pixels
+            for (auto& map : m_curr_sub_maps) {
+                std::transform(execParUnseq, map.get(), map.get() + m_npixels_agg, map.get(), [](const auto& i) {
+                    return log(i);
+                });
+            }
+
+            reset_temp_storage();
+
+            //add the submaps
+            get_aggregate(m_temp_storage);
+
+            //get the log prior
+            log_prior = Ops::reduce<tagF, float>(m_npixels_agg, m_temp_storage);
+
+            log_prior *= m_alpha; /* Per Jason Kramer 13 Mar 2009 */
+
+            return log_prior;
+        }
+    }
+
+    void add_higher_agg(uPtr_F& t_higher_agg)
+    {
+        //add the higher agg to each of the submaps
+        for (auto& map : m_curr_sub_maps) {
+            Ops::v_op<f_vadd,tagF>(f_vadd(),m_npixels_agg,map,t_higher_agg,map);
+        }
+
+        //update the current submaps
+        update_curr_map();
     }
 
     size_t get_dim()
@@ -1170,8 +1324,8 @@ class MultiScaleLevelMap
     // uPtr_F m_row_interleaved_B;   //odd rows of the current map
     // uPtr_F m_col_interleaved_A;   //even colums of the row interleaved sum
     // uPtr_F m_col_interleaved_B;   //odd rows of the row interleaved sum
-    uPtr_F m_current_map; //image of the current level
-    uPtr_F m_temp_storage;
+    uPtr_F m_current_map;  //image of the current level
+    uPtr_F m_temp_storage; //temporary storage with the current map dimensions
     //uPtr_F m_agg_norm_map; //
     //uPtr_F m_row_interleaved_sum; // the sum of even and odd rows. Has a size of~ dim/2 x dim
     /* Divide the current map into 4 sub maps. Their sum would be the aggregate matrix. Only do it if m_npixels/4 > max_lanes */
@@ -1197,9 +1351,13 @@ class MultiScaleLevelMap
     //std::vector<size_t> m_agg_indices;          //0-to-m_npixels_agg index array
     //std::vector<size_t> m_curr_map_agg_indices; //each element specifies its correspoinding index in the agg map
     //std::vector<size_t> m_curr_map_indices;     //0-to-m_npixels index array
-    float m_alpha;
+    float& m_alpha;
 
   private:
+    void reset_temp_storage()
+    {
+        std::fill(execParUnseq, m_temp_storage.get(), m_temp_storage.get() + m_npixels, 0.0f);
+    }
     void add_4(size_t t_npixels, const uPtr_F& t_a, const uPtr_F& t_b, const uPtr_F& t_c, const uPtr_F& t_d, uPtr_F& t_out)
     {
         const ScalableTag<float> a, b, c, d;
@@ -1252,8 +1410,9 @@ class MultiScaleLevelMap
 
     void normalize_curr_map(uPtr_F& t_out_data_map)
     {
+        //check for zeros in the aggregate
         //divide each pixel with its corresponding aggregated sum
-        std::for_each(m_curr_sub_maps.begin(), m_curr_sub_maps.end(), [&](const auto& a) {
+        std::for_each(m_curr_sub_maps.begin(), m_curr_sub_maps.end(), [&](auto& a) {
             div(m_npixels_agg, a, t_out_data_map, a);
         });
         update_curr_map();
@@ -1327,6 +1486,22 @@ class MultiScaleMap
         }
     }
 
+    void compute_cascade_proportions()
+    {
+        update_alpha_values();
+        for (size_t level = 0; level < m_nlevels; ++level) {
+            m_level_maps[level].recompute_pixels();
+        }
+    }
+
+    void compute_cascade_log_scale_images()
+    {
+        //start from the highest aggregate and get to the final map
+        for(auto i=m_nlevels;i>0;++i){
+            m_level_maps[i-1].add_higher_agg(m_level_maps[i].get_map());
+        }
+    }
+
     float get_log_prior(float t_alpha, int power4)
     {
         if (power4 == 0) {
@@ -1340,11 +1515,42 @@ class MultiScaleMap
         }
     }
 
+    void set_total_exp_count()
+    {
+        m_level_maps[m_nlevels].set_total_exp_count(m_ttlcnt_pr, m_ttlcnt_exp);
+    }
+
+    float get_max_agg_value()
+    {
+        return m_level_maps[m_nlevels].get_map().get()[0];
+    }
+
+    float get_ttlcnt_pr()
+    {
+        return m_ttlcnt_pr;
+    }
+
+    float get_ttlcnt_exp()
+    {
+        return m_ttlcnt_exp;
+    }
+
+    float get_log_prior_n_levels()
+    {
+
+        return std::reduce(m_level_maps.begin(), m_level_maps.end() - 1, 0.0f, [](const auto& a, const auto& b) {
+            return a.get_level_log_prior(FALSE) + b.get_level_log_prior(FALSE);
+        });
+    }
+
   protected:
     size_t m_nlevels;
     std::vector<MultiScaleLevelMap> m_level_maps;
-    float al_kap1, al_kap2, al_kap3;
+    float al_kap1, al_kap2, al_kap3, m_ttlcnt_pr, m_ttlcnt_exp;
     std::vector<float> m_alpha;
+    void update_alpha_values()
+    {
+    }
     //std::vector
 };
 
