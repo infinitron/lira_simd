@@ -2,6 +2,7 @@
 #define LIRA_H
 
 #include <R.h>
+#include <R_ext/Random.h>
 #include <Rmath.h>
 #include <hwy/base.h>
 #include <math.h>
@@ -11,6 +12,8 @@
 #include <algorithm>
 #include <exception>
 #include <execution>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -23,11 +26,39 @@
 #include "hwy/highway.h"
 #include "hwy/nanobenchmark.h"
 #include <cmath>
+#include <iomanip>
 #include <stdlib.h>
 typedef std::stringstream sstr;
 
 namespace hwy {
 namespace HWY_NAMESPACE {
+static Int32 seed;
+static double res;
+static int nseed = 1;
+
+double*
+user_unif_rand()
+{
+    //seed = 69069 * seed + 1;
+    res = 42;
+    return &res;
+}
+
+void
+user_unif_init(Int32 seed_in)
+{
+    seed = 42;
+}
+int*
+user_unif_nseed()
+{
+    return &nseed;
+}
+int*
+user_unif_seedloc()
+{
+    return (int*)&seed;
+}
 
 typedef AlignedFreeUniquePtr<float[]> uPtr_F;
 typedef AlignedFreeUniquePtr<float*[]> uPtr_Fv; //the "view" array
@@ -311,7 +342,7 @@ class Ops
 
     inline static void check_monotone_convergence() {}
 
-    inline static float update_image_ms(AsyncFileIO& t_out_files, const ExpMap& t_expmap, CountsMap& t_src, MultiScaleMap& t_ms)
+    inline static float update_image_ms(AsyncParamFileIO& t_out_files, const ExpMap& t_expmap, CountsMap& t_src, MultiScaleMap& t_ms)
     {
         auto dim = t_src.get_dim();
         auto spin_row = Utils::binary_roulette(dim);
@@ -346,12 +377,12 @@ class Ops
         t_ms.compute_cascade_log_scale_images();
 
         //store new image in src.img
-        t_src.set_spin_img(t_ms.get_level(0).get_map(),spin_row,spin_col);
+        t_src.set_spin_img(t_ms.get_level(0).get_map(), spin_row, spin_col);
 
         return log_prior;
     }
 
-    inline static void update_alpha_ms(AsyncFileIO& t_out_file, MultiScaleMap& t_ms)
+    inline static void update_alpha_ms(AsyncParamFileIO& t_out_file, MultiScaleMap& t_ms)
     {
         float lower, //lower
           middle,    //middle
@@ -422,12 +453,12 @@ class Ops
         return (current);
     };
 
-    inline static float ddlpost_lalpha(float t_alpha, MultiScaleMap& t_ms, size_t level)
-    {
-    }
+    // inline static float ddlpost_lalpha(float t_alpha, MultiScaleMap& t_ms, size_t level)
+    // {
+    // }
 
     template<typename D, int Pow4>
-    inline static float dnlpost_alpha(D t_dfunc, float& t_alpha, MultiScaleMap& t_ms, const size_t& t_level)
+    inline static float dnlpost_alpha(D t_dfunc, const float& t_alpha, MultiScaleMap& t_ms, const size_t& t_level)
     {
         auto factor = float(pow(4, Pow4));
         //D=digamma=>dlpost_alpha
@@ -444,7 +475,7 @@ class Ops
         return dnlpost_alpha<f_digamma, 1>(f_digamma(), t_alpha, t_ms, t_level) * t_alpha + 1.f;
     }
 
-    inline static float ddlpost_lalpha(float& t_alpha, MultiScaleMap& t_ms, const size_t& t_level)
+    inline static float ddlpost_lalpha(const float& t_alpha, MultiScaleMap& t_ms, const size_t& t_level)
     {
         return dnlpost_alpha<f_trigamma, 1>(f_trigamma(), t_alpha, t_ms, t_level) * t_alpha + dnlpost_alpha<f_trigamma, 2>(f_trigamma(), t_alpha, t_ms, t_level) * t_alpha * t_alpha;
     }
@@ -455,10 +486,99 @@ class Ops
     }
 };
 
+//the async feature of this class will be implemented in the future
+template<class T>
 class AsyncFileIO
 {
   public:
-    AsyncFileIO() {}
+    AsyncFileIO(const std::string t_out_file)
+      : m_out_file_name(t_out_file)
+    {
+        m_out_file.open(m_out_file_name);
+    }
+
+    template<class I>
+    AsyncFileIO& operator<<(const I& t_rhs)
+    {
+        m_out_file << t_rhs;
+        return static_cast<T>(*this);
+    }
+
+  protected:
+    std::string m_get_cmnt_str() { return "#\n# "; }
+    std::string m_out_file_name;
+    std::ofstream m_out_file;
+};
+
+class AsyncParamFileIO : public AsyncFileIO<AsyncParamFileIO>
+{
+    AsyncParamFileIO(std::string t_out_file, const ExpMap& t_exp_map, const MultiScaleMap& t_ms, const Config& t_conf)
+      : AsyncFileIO(t_out_file)
+    {
+        //print the header
+        m_out_file << m_get_cmnt_str() << "Code will run in posterior sampling mode.\n";
+        if (t_conf.is_fit_bkg_scl())
+            m_out_file << m_get_cmnt_str() << "A scale parameter will be fit to the bkg model.\n";
+        m_out_file << m_get_cmnt_str() << "The total number of Gibbs draws is " << t_conf.get_max_iter() << "\n";
+        m_out_file << m_get_cmnt_str() << "Every " << t_conf.get_save_thin() << "th draw will be saved\n";
+        m_out_file << m_get_cmnt_str() << "The model will be fit using the Multi Scale Prior.\n";
+        m_out_file << m_get_cmnt_str() << "The data matrix is " << t_exp_map.get_dim() << " by " << t_exp_map.get_dim() << "\n";
+        m_out_file << m_get_cmnt_str() << "The data file should contain a  2^" << t_ms.get_nlevels() << " by 2^" << t_ms.get_nlevels() << " matrix of counts.\n";
+        m_out_file << "Starting Values for the smoothing parameter (alpha):\n";
+        for (auto i = 0; i < t_ms.get_nlevels(); ++i) {
+            m_out_file << m_get_cmnt_str() << t_ms.get_alpha(i) << "\n";
+        }
+        *this << "Iteration"
+              << "logPost"
+              << "stepSize"
+              << "cycleSpinRow"
+              << "cycleSpinCol";
+        for (auto i = 0; i < t_ms.get_nlevels(); ++i) {
+            *this << "smoothinParam" << i;
+        }
+        *this << "expectedMSCounts"
+              << "bkgScale\n";
+    }
+
+    template<class I>
+    AsyncParamFileIO& operator<<(const I& t_rhs)
+    {
+        m_out_file << std::left << std::setw(17) << std::setfill(' ') << t_rhs;
+        return *this;
+    }
+};
+
+class AsyncImgIO:public AsyncFileIO<AsyncImgIO>{
+    public:
+    AsyncImgIO(std::string t_out_file):AsyncFileIO(t_out_file){}
+
+    void write_img(CountsMap& t_map){
+        auto dim=t_map.get_dim();
+        auto npixels=t_map.get_npixels();
+        const auto &img=t_map.get_img_map();
+        for(auto i=0;i<npixels;i+=dim){
+            for(auto j=0;j<npixels;++j){
+                m_out_file<<img.get()[i+j]<<" ";
+            }
+            m_out_file<<"\n";
+        }
+    }
+};
+
+class Config
+{
+  public:
+    Config()
+    {
+    }
+    size_t get_max_iter() const { return m_max_iter; }
+    size_t get_save_thin() const { return m_save_thin; }
+    bool is_fit_bkg_scl() const { return m_is_fit_bkg_scl; }
+
+  protected:
+    size_t m_max_iter;
+    size_t m_save_thin;
+    bool m_is_fit_bkg_scl;
 };
 
 class Utils
@@ -492,8 +612,9 @@ struct f_lgamma
     float operator()(float& v) { return lgammafn(v); }
 };
 
-struct f_vadd{
-    vecF operator()(vecF &t_a,vecF &t_b){return Add(t_a,t_b);}
+struct f_vadd
+{
+    vecF operator()(vecF& t_a, vecF& t_b) { return Add(t_a, t_b); }
 };
 
 class Constants
@@ -983,7 +1104,8 @@ class CountsMap : public ImgMap<CountsMap>
         }
     }
 
-    void init_img_spin_views(){
+    void init_img_spin_views()
+    {
         if (m_is_spin_img_views_set)
             return;
 
@@ -1004,8 +1126,6 @@ class CountsMap : public ImgMap<CountsMap>
         }
     }
 
-
-
     void get_spin_data(uPtr_F& t_out, size_t spin_row, size_t spin_col)
     {
         auto pair_key = std::pair<int, int>(spin_row, spin_col);
@@ -1020,7 +1140,8 @@ class CountsMap : public ImgMap<CountsMap>
         }
     }
 
-    void set_spin_img(uPtr_F &t_in_map,size_t spin_row,size_t spin_col){
+    void set_spin_img(uPtr_F& t_in_map, size_t spin_row, size_t spin_col)
+    {
         auto pair_key = std::pair<int, int>(spin_row, spin_col);
         if (m_spin_img_views.count(pair_key) == 0)
             throw(InvalidParams(spin_row, spin_col));
@@ -1028,8 +1149,8 @@ class CountsMap : public ImgMap<CountsMap>
         const auto& img_spin_ref = m_spin_img_views[pair_key];
 
         //__PAR__
-        for(size_t i=0;i<m_npixels;++i){
-            *img_spin_ref.get()[i]=t_in_map.get()[i];
+        for (size_t i = 0; i < m_npixels; ++i) {
+            *img_spin_ref.get()[i] = t_in_map.get()[i];
         }
     }
 
@@ -1307,7 +1428,7 @@ class MultiScaleLevelMap
     {
         //add the higher agg to each of the submaps
         for (auto& map : m_curr_sub_maps) {
-            Ops::v_op<f_vadd,tagF>(f_vadd(),m_npixels_agg,map,t_higher_agg,map);
+            Ops::v_op<f_vadd, tagF>(f_vadd(), m_npixels_agg, map, t_higher_agg, map);
         }
 
         //update the current submaps
@@ -1457,19 +1578,19 @@ class MultiScaleMap
         return m_level_maps[level];
     }
 
-    size_t get_nlevels()
+    size_t get_nlevels() const
     {
         return m_nlevels;
     }
 
     void set_alpha(int level, float t_value)
     {
-        if (level > m_nlevels)
+        if (level >= m_nlevels)
             throw(InvalidParams(std::string("The input level is greater than max level. Input level: ") + std::to_string(m_nlevels)));
         m_alpha[level] = t_value;
     }
 
-    float get_alpha(int level)
+    float get_alpha(int level) const
     {
         if (level > m_nlevels)
             throw(InvalidParams(std::string("The input level is greater than max level. Input level: ") + std::to_string(m_nlevels)));
@@ -1497,8 +1618,8 @@ class MultiScaleMap
     void compute_cascade_log_scale_images()
     {
         //start from the highest aggregate and get to the final map
-        for(auto i=m_nlevels;i>0;++i){
-            m_level_maps[i-1].add_higher_agg(m_level_maps[i].get_map());
+        for (auto i = m_nlevels; i > 0; ++i) {
+            m_level_maps[i - 1].add_higher_agg(m_level_maps[i].get_map());
         }
     }
 
@@ -1551,6 +1672,7 @@ class MultiScaleMap
     void update_alpha_values()
     {
     }
+
     //std::vector
 };
 
