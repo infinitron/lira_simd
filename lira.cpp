@@ -5,62 +5,6 @@
 HWY_BEFORE_NAMESPACE();
 namespace hwy {
 namespace HWY_NAMESPACE {
-// static Int32 seed;
-// static double res;
-// static int nseed = 1;
-
-// double*
-// user_unif_rand()
-// {
-//     //seed = 69069 * seed + 1;
-//     res = 42;
-//     return &res;
-// }
-
-// void
-// user_unif_init(Int32 seed_in)
-// {
-//     seed = 42;
-// }
-// int*
-// user_unif_nseed()
-// {
-//     return &nseed;
-// }
-// int*
-// user_unif_seedloc()
-// {
-//     return (int*)&seed;
-// }
-
-// typedef AlignedFreeUniquePtr<float[]> uPtr_F;
-// typedef AlignedFreeUniquePtr<float*[]> uPtr_Fv; //the "view" array
-// typedef Vec<ScalableTag<float>> vecF;
-// typedef ScalableTag<float> tagF;
-
-// typedef AlignedFreeUniquePtr<size_t[]> uPtr_Int;
-// const auto& execParUnseq = std::execution::par_unseq;
-// struct llikeType
-// {
-//     double cur; /* the current log likelihood of the iteration */
-//     double pre; /* the previous log likelihood of the iteration */
-// };
-
-// struct scalemodelType
-// {
-//     double scale;     /* the scale parameter */
-//     double scale_pr;  /* the prior on the total cnt in exposure = ttlcnt_exp */
-//     double scale_exp; /* the prior exposure in units of the actual exposure */
-// };
-
-// class TempDS
-// {
-//   public:
-//     inline static std::map<std::string, uPtr_F> m_Fltv;
-// };
-// class ExpMap;
-// class MultiScaleMap;
-// class Config;
 
 size_t
 Utils::get_power_2(size_t i)
@@ -78,14 +22,6 @@ Utils::binary_roulette(size_t dim)
 {
     return (size_t)dim * runif(0, 1);
 }
-
-// class Utils
-// {
-//   public:
-//     inline static
-
-//     inline static
-// };
 
 WrappedIndexMap::WrappedIndexMap(size_t& t_img_dim, size_t& t_psf_dim)
   : m_img_dim(t_img_dim)
@@ -140,41 +76,14 @@ WrappedIndexMap::wrap_idx(int t_idx, const size_t& t_dim)
     return t_idx % t_dim;
 }
 
-// class WrappedIndexMap
-// {
-//   public:
-//     WrappedIndexMap(size_t& t_img_dim, size_t& t_psf_dim)
-//       : m_img_dim(t_img_dim)
-//       , m_psf_dim(t_psf_dim)
-
-//             const std::vector<size_t> &
-//           get_map() const
-//     {
-//         return m_idx_map;
-//     }
-
-//   private:
-
-// };
-
-// class PSF : public ImgMap<PSF>
-// {
-//   public:
-
-// };
-
 PSF&
 PSF::initialize()
 {
-
-    //ScalableTag<float> d;
-    //m_aligned_size = m_orig_size + m_orig_size % Lanes(d); //pad the extra elements with zeros
 
     m_mat = AllocateAligned<float>(m_npixels);
     m_inv = AllocateAligned<float>(m_npixels);
 
     std::copy(execParUnseq, m_mat_holder, m_mat_holder + m_npixels, m_mat.get());
-    //std::copy(execParUnseq, m_mat_holder, m_mat_holder + m_npixels, m_rmat.get());
     std::reverse_copy(execParUnseq, m_mat_holder, m_mat_holder + m_npixels, m_rmat.get());
     std::fill(execParUnseq, m_mat.get() + m_orig_size, m_mat.get() + m_aligned_size, 0.f);
 
@@ -210,7 +119,7 @@ ExpMap::initialize()
     std::copy(m_mat_holder, m_mat_holder + n_pixels, m_map.get());
     max_exp = *std::max_element(execParUnseq, m_map.get(), m_map.get() + n_pixels);
 
-    ScalableTag<float> d;
+    tagF d;
     const auto max_vector = Set(d, max_exp);
 
     //normalize the exposure map
@@ -240,11 +149,7 @@ ExpMap::get_map() const
 {
     return m_map;
 }
-// class CountsMap : public ImgMap<CountsMap>
-// {
-//   public:
 
-// };
 CountsMap&
 CountsMap::initialize()
 {
@@ -292,31 +197,6 @@ CountsMap::get_img_map()
     return m_img;
 }
 
-/*void set_warped_img(const WrappedIndexMap& t_w_idx_map)
-    {
-        m_is_wimg_set = true;
-        m_pad_dim = t_w_idx_map.get_pad_dim();
-        m_npixels_wmap = t_w_idx_map.get_npixels();
-        m_wmap_dim = t_w_idx_map.get_dim();
-        if (m_warped_img_ref == nullptr) {
-            m_warped_img_ref = AllocateAligned<float*>(m_npixels_wmap);
-            for (size_t i = 0; i < m_npixels_wmap; ++i)
-                m_wmap_seq_idx.push_back(i);
-        }
-        if (m_warped_img == nullptr) {
-            m_warped_img = AllocateAligned<float>(m_npixels_wmap);
-        }
-        const auto map = t_w_idx_map.get_map();
-
-        for (auto i : m_wmap_seq_idx) {
-            *m_warped_img_ref.get()[i] = m_img.get()[i];
-        }
-        // std::for_each(execParUnseq, m_wmap_seq_idx.begin(), m_wmap_seq_idx.end(), [&](const auto &i) {
-        //     *m_warped_img.get()[i] = &map[i];
-        // });
-        //std::transform(execParUnseq,)
-    }*/
-
 void
 CountsMap::set_warped_mat(const WrappedIndexMap& t_w_idx_map, CountsMapDataType t_type)
 {
@@ -353,67 +233,14 @@ CountsMap::set_warped_mat(const WrappedIndexMap& t_w_idx_map, CountsMapDataType 
         }
     }
 }
-/*
-void
-CountsMap::init_data_spin_views()
-{
-    if (m_is_spin_data_views_set)
-        return;
-
-    m_is_spin_data_views_set = true;
-    for (int spin_row = 0; spin_row < 2; ++spin_row) {
-        for (int spin_col = 0; spin_col < 2; ++spin_col) {
-            auto pair_key = std::pair<int, int>(spin_row, spin_col);
-            m_spin_data_views[pair_key] = AllocateAligned<float*>(m_npixels);
-            auto& spin_view_ref = m_spin_data_views[pair_key];
-
-            //set the view
-            for (size_t row = 0; row < m_nrows; ++row) {
-                for (size_t col = 0; col < m_ncols; ++col) {
-                    spin_view_ref.get()[row * m_nrows + m_ncols] = &m_data.get()[((row + spin_row) % m_nrows) * m_nrows + (col + spin_col) % m_ncols];
-                }
-            }
-        }
-    }
-}
-
-void
-CountsMap::init_img_spin_views()
-{
-    if (m_is_spin_img_views_set)
-        return;
-
-    m_is_spin_img_views_set = true;
-    for (int spin_row = 0; spin_row < 2; ++spin_row) {
-        for (int spin_col = 0; spin_col < 2; ++spin_col) {
-            auto pair_key = std::pair<int, int>(spin_row, spin_col);
-            m_spin_img_views[pair_key] = AllocateAligned<float*>(m_npixels);
-            auto& spin_view_ref = m_spin_img_views[pair_key];
-
-            //set the view
-            for (size_t row = 0; row < m_nrows; ++row) {
-                for (size_t col = 0; col < m_ncols; ++col) {
-                    spin_view_ref.get()[row * m_nrows + m_ncols] = &m_img.get()[((row + spin_row) % m_nrows) * m_nrows + (col + spin_col) % m_ncols];
-                }
-            }
-        }
-    }
-}
-*/
 
 void
 CountsMap::get_spin_data(uPtr_F& t_out, size_t spin_row, size_t spin_col)
 {
-    // auto pair_key = std::pair<int, int>(spin_row, spin_col);
-    // if (m_spin_data_views.count(pair_key) == 0)
-    //     throw(InvalidParams(spin_row, spin_col));
-
-    // const auto& data_spin_ref = m_spin_data_views[pair_key];
-
     //__PAR__
     for (size_t i = 0; i < m_nrows; ++i) {
-        for(size_t j=0;j<m_ncols;++j){
-            t_out.get()[i*m_ncols+j] = m_data.get()[((i+spin_row)%m_nrows)*m_ncols + (j+spin_col)%m_ncols];
+        for (size_t j = 0; j < m_ncols; ++j) {
+            t_out.get()[i * m_ncols + j] = m_data.get()[((i + spin_row) % m_nrows) * m_ncols + (j + spin_col) % m_ncols];
         }
     }
 };
@@ -421,21 +248,12 @@ CountsMap::get_spin_data(uPtr_F& t_out, size_t spin_row, size_t spin_col)
 void
 CountsMap::set_spin_img(uPtr_F& t_in_map, size_t spin_row, size_t spin_col)
 {
-    // auto pair_key = std::pair<int, int>(spin_row, spin_col);
-    // if (m_spin_img_views.count(pair_key) == 0)
-    //     throw(InvalidParams(spin_row, spin_col));
-
-    // const auto& img_spin_ref = m_spin_img_views[pair_key];
-
-    //__PAR__
-    /*for (size_t i = 0; i < m_npixels; ++i) {
-        *img_spin_ref.get()[i] = t_in_map.get()[i];
-    }*/
+    //TODO: Figure out an efficient way to skip the mod operation
 
     //__PAR__
     for (size_t i = 0; i < m_nrows; ++i) {
-        for(size_t j=0;j<m_ncols;++j){
-            m_img.get()[((i+spin_row)%m_nrows)*m_ncols + (j+spin_col)%m_ncols] = exp(t_in_map.get()[i*m_ncols+j]);
+        for (size_t j = 0; j < m_ncols; ++j) {
+            m_img.get()[((i + spin_row) % m_nrows) * m_ncols + (j + spin_col) % m_ncols] = exp(t_in_map.get()[i * m_ncols + j]);
         }
     }
 }
@@ -511,58 +329,13 @@ MultiScaleLevelMap::MultiScaleLevelMap(size_t t_dimension, float t_alpha)
     m_npixels_agg = m_npixels / 4; //zero for a single pixel level
     m_current_map = AllocateAligned<float>(m_npixels);
     m_temp_storage = AllocateAligned<float>(m_npixels);
-    /*, m_row_interleaved_sum(AllocateAligned<float>(m_half_npixels)), m_row_interleaved_A(AllocateAligned<float>(m_half_npixels)), m_row_interleaved_B(AllocateAligned<float>(m_npixels_agg)), m_col_interleaved_A(AllocateAligned<float>(m_npixels_agg)), m_row_to_col_interleaved_flag(m_half_npixels, true), m_row_to_col_indices(m_half_npixels, 0), m_row_interleaved_indices(m_half_npixels, 0), m_sub_npixels(m_npixels / 4), m_half_npixels(m_npixels / 2), m_agg_indices(m_npixels_agg, 0), m_curr_map_agg_indices(m_npixels, 0), m_curr_map_indices(m_npixels, 0),, m_agg_norm_map(AllocateAligned<float>(m_npixels))*/
 
     std::fill(execParUnseq, m_current_map.get(), m_current_map.get() + m_npixels, 0.f);
     std::fill(execParUnseq, m_temp_storage.get(), m_temp_storage.get() + m_npixels, 0.f);
-    //std::fill(m_agg_norm_map.get(), m_agg_norm_map.get() + m_npixels, 0.f);
-    /*std::fill(m_row_interleaved_sum.get(), m_row_interleaved_sum.get() + m_half_npixels, 0.f);
-                std::fill(m_row_interleaved_A.get(), m_row_interleaved_A.get() + m_half_npixels, 0.f);
-                std::fill(m_row_interleaved_B.get(), m_row_interleaved_B.get() + m_half_npixels, 0.f);
-                std::fill(m_col_interleaved_A.get(), m_col_interleaved_A.get() + m_npixels_agg, 0.f);
-                std::fill(m_col_interleaved_B.get(), m_col_interleaved_B.get() + m_npixels_agg, 0.f);*/
-
-    //pre-compute slicing indices
-    // size_t counter = 0;
-    // std::for_each(m_row_to_col_interleaved_flag.begin(), m_row_to_col_interleaved_flag.end(), [](auto &i)
-    //               {
-    //                   i = counter % 2 == 0 ? true : FALSE;
-    //                   ++counter;
-    //               });
-    // std::for_each(m_row_to_col_indices.begin(), m_row_to_col_indices.end(), [](auto &i)
-    //               { i = i % 2 == 0 ? i : i - 1; });
-    // std::iota(m_row_interleaved_indices.begin(), m_row_interleaved_indices.end(), 0);
-    // std::iota(m_agg_indices.begin(), m_agg_indices.end(), 0);
-    // std::iota(m_curr_map_indices.begin(), m_curr_map_indices.end(), 0);
-    // std::for_each(m_agg_indices.begin(), m_agg_indices.end(), [&](const size_t &i) {
-    //     size_t main = 0;
-    //     if (i < m_dimension_agg)
-    //     {
-    //         main = i * 2;
-    //     }
-    //     else
-    //     {
-    //         main = i / m_dimension_agg * m_dimension_agg * 4 + (i - i / m_dimension_agg * m_dimension_agg) * 2;
-    //     }
-    //     m_curr_map_agg_indices[main] = i;
-    //     m_curr_map_agg_indices[main + 1] = i;
-    //     m_curr_map_agg_indices[main + m_dimension] = i;
-    //     m_curr_map_agg_indices[main + m_dimension + 1] = i;
-    // });
 
     for (auto i = 0; i < 4; i++) {
         m_curr_sub_maps.push_back(AllocateAligned<float>(m_npixels_agg));
     }
-    /*for (auto i = 0; i < m_dimension * (m_dimension - 2); i += m_dimension)
-        {
-            for (auto j = 0; j < m_dimension_agg; j++)
-            {
-                m_curr_sub_maps_idx[0].push_back((i + j) * 2);
-                m_curr_sub_maps_idx[1].push_back((i + j) * 2 + 1);
-                m_curr_sub_maps_idx[2].push_back((i + j) * 2 + m_dimension);
-                m_curr_sub_maps_idx[3].push_back((i + j) * 2 + m_dimension + 1);
-            }
-        }*/
 
     for (auto i = 0; i < 4; i++) {
         m_4sub_maps_ref.push_back(AllocateAligned<float*>(m_npixels_agg));
@@ -582,9 +355,6 @@ MultiScaleLevelMap::set_map(const uPtr_F& t_data_map)
 {
     std::copy(t_data_map.get(), t_data_map.get() + m_npixels, m_current_map.get());
     set_sub_maps();
-
-    //set the row interleaved levels
-    //set_row_interleaved();
 }
 
 void
@@ -734,7 +504,7 @@ MultiScaleLevelMap::reset_temp_storage()
 void
 MultiScaleLevelMap::add_4(size_t t_npixels, const uPtr_F& t_a, const uPtr_F& t_b, const uPtr_F& t_c, const uPtr_F& t_d, uPtr_F& t_out)
 {
-    const ScalableTag<float> a, b, c, d;
+    const tagF a, b, c, d;
     const auto lanes = Constants::get_max_lanes();
     for (size_t i = 0; i < t_npixels; i += lanes) {
         Store(
@@ -746,7 +516,7 @@ void
 MultiScaleLevelMap::div(size_t t_npixels, const uPtr_F& t_a, const uPtr_F& t_b, uPtr_F& t_out)
 {
     const auto lanes = Constants::get_max_lanes();
-    const ScalableTag<float> a, b;
+    const tagF a, b;
     for (size_t i = 0; i < t_npixels; i += lanes) {
         Store(
           Div(Load(a, t_a.get() + i), Load(b, t_b.get() + i)), a, t_out.get() + i);
@@ -764,25 +534,6 @@ MultiScaleLevelMap::update_curr_map()
         *m_4sub_maps_ref[3].get()[i] = m_curr_sub_maps[3].get()[i];
     }
 }
-// void get_agg_dim_gte_lanes(uPtr_F &t_out_data_map)
-// {
-
-//     add_4(m_npixels_agg, m_curr_sub_maps[0], m_curr_sub_maps[1], m_curr_sub_maps[2], m_curr_sub_maps[3], t_out_data_map);
-// }
-// void get_agg_dim_lt_lanes(uPtr_F &t_out_data_map)
-// {
-//     //the good old for loop without lanes
-//     for (auto i = 0; i < m_npixels_agg; ++i)
-//     {
-//         t_out_data_map.get()[i] = std::reduce(m_curr_sub_maps.begin(), m_curr_sub_maps.end(), 0.f, [&](auto a, auto b)
-//                                               { return a.get()[i] + b.get()[i]; });
-//     }
-// }
-
-// void generate_agg_norm_map(const uPtr_F &t_out_data_map)
-// {
-//     std::for_each(m_curr_map_indices.begin(), m_curr_map_indices.end(), [&](const auto &i) { m_agg_norm_map.get()[i] = t_out_data_map.get()[(m_curr_map_agg_indices[i]]; });
-// }
 
 void
 MultiScaleLevelMap::normalize_curr_map(uPtr_F& t_out_data_map)
@@ -795,32 +546,6 @@ MultiScaleLevelMap::normalize_curr_map(uPtr_F& t_out_data_map)
     update_curr_map();
 }
 
-// void set_row_interleaved()
-// {
-//     for (size_t i = 0; i < m_dimension; i += 2)
-//     {
-//         std::copy_n(m_current_map.get() + i * m_dimension, m_dimension, m_row_interleaved_A.get() + i / 2 * m_dimension);
-
-//         std::copy_n(m_current_map.get() + (i + 1) * m_dimension, m_dimension, m_row_interleaved_B.get() + i / 2 * m_dimension);
-//     }
-// }
-
-// void set_col_interleaved()
-// {
-
-//     std::for_each(m_row_interleaved_indices.begin(), m_row_interleaved_indices.end(), [](const auto &i)
-//                   {
-//                       if (m_row_to_col_interleaved_flag[i])
-//                           m_col_interleaved_A.get()[m_row_to_col_indices[i]] = m_row_interleaved_sum.get()[i];
-//                       else
-//                           m_col_interleaved_B.get()[m_row_to_col_indices[i]] = m_row_interleaved_sum.get()[i];
-//                   });
-// }
-//};
-
-// class MultiScaleMap
-// {
-//   public:
 MultiScaleMap::MultiScaleMap(size_t t_power2, float* t_alpha_vals, float t_kap1, float t_kap2, float t_kap3, float t_ttlcnt_pr, float t_ttlcnt_exp)
   : al_kap1(t_kap1)
   , al_kap2(t_kap2)
@@ -961,12 +686,6 @@ MultiScaleMap::get_log_prior_n_levels(bool t_lt_flag = FALSE)
     });
 }
 
-//std::vector
-// };
-
-// class Ops
-// {
-//   public:
 void
 update_deblur_image(ExpMap& t_expmap, CountsMap& t_deblur, CountsMap& t_src, CountsMap& t_bkg, const scalemodelType& t_bkg_scale)
 {
@@ -1106,8 +825,6 @@ Ops::remove_bkg_from_data(CountsMap& t_deblur, CountsMap& t_src, CountsMap& t_bk
     auto& deblur_data = t_deblur.get_data_map();
     auto bkg_scale_vec = Set(d, bkg_scale.scale);
 
-    // auto& prob_src = TempDS::m_Fltv["rem_bkg_prob_src"];
-
     //reset the data store
     std::fill(execParUnseq, prob_src.get(), prob_src.get() + npixels, 0.f);
 
@@ -1175,8 +892,8 @@ float
 Ops::update_image_ms(AsyncParamFileIO& t_param_file, const ExpMap& t_expmap, CountsMap& t_src, MultiScaleMap& t_ms, Config& t_conf)
 {
     auto dim = t_src.get_dim();
-    int  spin_row = dim * Utils::binary_roulette(dim);
-    int  spin_col = dim * Utils::binary_roulette(dim);
+    int spin_row = dim * Utils::binary_roulette(dim);
+    int spin_col = dim * Utils::binary_roulette(dim);
     float log_prior = 0.0f;
 
     //_____FILE_IO_____//
@@ -1291,10 +1008,6 @@ Ops::update_alpha_ms_MH(const float& t_prop_mean, MultiScaleMap& t_ms, const siz
     return (current);
 }
 
-// inline static float ddlpost_lalpha(float t_alpha, MultiScaleMap& t_ms, size_t level)
-// {
-// }
-
 float
 Ops::dlpost_lalpha(float t_alpha, MultiScaleMap& t_ms, const size_t& t_level)
 {
@@ -1330,13 +1043,6 @@ Ops::update_scale_model(scalemodelType& t_scl_mdl, ExpMap& t_expmap, CountsMap& 
     t_scl_mdl.scale = rgamma(total_cnt + t_scl_mdl.scale_pr, 1 / (total_exp + t_scl_mdl.scale_exp));
 }
 
-// };
-
-//the async feature of this class will be implemented in the future
-
-// class AsyncParamFileIO : public AsyncFileIO<AsyncParamFileIO>
-// {
-//     public:
 AsyncParamFileIO::AsyncParamFileIO(std::string t_out_file, const ExpMap& t_exp_map, const MultiScaleMap& t_ms, const Config& t_conf)
   : AsyncFileIO(t_out_file)
 {
@@ -1373,12 +1079,6 @@ AsyncParamFileIO::AsyncParamFileIO(std::string t_out_file, const ExpMap& t_exp_m
           << "bkgScale";
 }
 
-// };
-
-// class AsyncImgIO : public AsyncFileIO<AsyncImgIO>
-// {
-//   public:
-
 void
 AsyncImgIO::write_img(CountsMap& t_map)
 {
@@ -1392,7 +1092,6 @@ AsyncImgIO::write_img(CountsMap& t_map)
         m_out_file << "\n";
     }
 }
-// };
 
 void
 image_analysis_R(
@@ -1582,5 +1281,5 @@ image_analysis_R2(
 } // namespace hwy
 HWY_AFTER_NAMESPACE();
 
-
 //g++ -c lira.cpp -lR -lhwy -I/usr/local/include/ -I/usr/share/R/include/ -O2 -std=c++17 -ltbb
+//g++ -shared lira.cpp -lR -lhwy -I/usr/local/include/ -I/usr/share/R/include/ -O2 -std=c++17 -ltbb -fPIC -o lira.so

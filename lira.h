@@ -66,8 +66,8 @@ struct controlType
 
 struct llikeType
 {
-    double cur{0}; /* the current log likelihood of the iteration */
-    double pre{0}; /* the previous log likelihood of the iteration */
+    double cur{ 0 }; /* the current log likelihood of the iteration */
+    double pre{ 0 }; /* the previous log likelihood of the iteration */
 };
 
 struct scalemodelType
@@ -139,14 +139,14 @@ class Config
       , m_is_fit_bkg_scl(t_fit_bkg_scl)
     {
     }
-    bool is_save() const {return iter%m_save_thin==0?true:false;}
+    bool is_save() const { return iter % m_save_thin == 0 ? true : false; }
     size_t get_max_iter() const { return m_max_iter; }
     size_t get_save_thin() const { return m_save_thin; }
     size_t get_burn() const { return m_burn; }
     bool is_fit_bkg_scl() const { return m_is_fit_bkg_scl; }
     size_t iter{ 0 };
-    bool is_save_post_mean()const{ return iter>m_burn?true:false;}
-    size_t get_iter_m_burn() const{return iter-m_burn;}
+    bool is_save_post_mean() const { return iter > m_burn ? true : false; }
+    size_t get_iter_m_burn() const { return iter - m_burn; }
 
   protected:
     size_t m_max_iter;
@@ -172,11 +172,6 @@ class Constants
     inline static const std::map<MapType, std::string> map_names = { { MapType::PSF, "PSF" }, { MapType::EXP, "Exposure" }, { MapType::COUNTS, "Counts" } };
 
     inline static const float convg_bisect{ 1e-8 };
-    // inline static const size_t get_lanes()
-    // {
-    //     ScalableTag<float> d;
-    //     return static_cast<size_t>(Lanes(d));
-    // }
     inline static const ScalableTag<float> d;
     typedef decltype(d) maxVec;
     inline static size_t get_max_lanes()
@@ -255,8 +250,6 @@ class Utils
     template<class VecType, class TagType>
     inline static void mul_add_pixels(const size_t& t_npixels, const size_t& max_lanes, const uPtr_F& t_a, const uPtr_F& t_b, VecType& t_result, size_t t_start_a = 0, size_t t_start_b = 0)
     {
-        //const ScalableTag<float> a;
-        //const ScalableTag<float> b;
         const TagType a, b;
 
         size_t i = 0;
@@ -272,8 +265,6 @@ class Utils
     template<class VecType, class TagType>
     inline static void mul_store_add_pixels(const size_t& t_npixels, const size_t& max_lanes, const uPtr_F& t_a, const uPtr_F& t_b, uPtr_F& t_store, VecType& t_result, const size_t& t_start_a = 0, const size_t& t_start_b = 0, const size_t& t_start_store = 0)
     {
-        //const ScalableTag<float> a;
-        //const ScalableTag<float> b;
         const TagType a, b, d;
         VecType mul_value;
 
@@ -402,6 +393,9 @@ class ImgMap
         }
     }
 
+    ImgMap(const ImgMap&)=delete;
+    ImgMap& operator=(const ImgMap&)=delete;
+
     size_t get_npixels() const
     {
         return m_npixels;
@@ -411,9 +405,11 @@ class ImgMap
     {
         return m_nrows;
     }
-    size_t get_power2(){
-      return m_power2;
+    size_t get_power2()
+    {
+        return m_power2;
     }
+
   protected:
     const size_t m_nrows;
     const size_t m_ncols;
@@ -529,8 +525,6 @@ class CountsMap : public ImgMap<CountsMap>
     uPtr_F& get_data_map();
     uPtr_F& get_img_map();
     void set_warped_mat(const WrappedIndexMap& t_w_idx_map, CountsMapDataType t_type = CountsMapDataType::DATA);
-    //void init_data_spin_views();
-    //void init_img_spin_views();
     void get_spin_data(uPtr_F& t_out, size_t spin_row, size_t spin_col);
     void set_spin_img(uPtr_F& t_in_map, size_t spin_row, size_t spin_col);
     uPtr_F& get_warped_img();
@@ -552,11 +546,6 @@ class CountsMap : public ImgMap<CountsMap>
     bool m_is_wdata_set{ false };
     size_t m_wmap_dim;
     size_t m_pad_dim{ 0 };
-    //std::vector<uPtr_Fv> m_4spin_views;
-    //std::map<std::pair<int, int>, uPtr_Fv> m_spin_data_views; //holds references to the data map view for different row/col spin values
-    //std::map<std::pair<int, int>, uPtr_Fv> m_spin_img_views;
-    //bool m_is_spin_data_views_set{ false };
-    //bool m_is_spin_img_views_set{ false };
 
   private:
     const float* m_map_holder;
@@ -591,37 +580,14 @@ class MultiScaleLevelMap
     size_t get_dim();
 
   protected:
-    // uPtr_F m_row_interleaved_A;   //even rows of the current map
-    // uPtr_F m_row_interleaved_B;   //odd rows of the current map
-    // uPtr_F m_col_interleaved_A;   //even colums of the row interleaved sum
-    // uPtr_F m_col_interleaved_B;   //odd rows of the row interleaved sum
     uPtr_F m_current_map;  //image of the current level
     uPtr_F m_temp_storage; //temporary storage with the current map dimensions
-    //uPtr_F m_agg_norm_map; //
-    //uPtr_F m_row_interleaved_sum; // the sum of even and odd rows. Has a size of~ dim/2 x dim
-    /* Divide the current map into 4 sub maps. Their sum would be the aggregate matrix. Only do it if m_npixels/4 > max_lanes */
     std::vector<uPtr_F> m_curr_sub_maps;
-    //std::vector<std::vector<size_t>> m_curr_sub_maps_idx;
     std::vector<uPtr_Fv> m_4sub_maps_ref;
-    // std::vector<size_t> m_curr_sub_A_idx;
-    // std::vector<size_t> m_curr_sub_B_idx;
-    // std::vector<size_t> m_curr_sub_C_idx;
-    // std::vector<size_t> m_curr_sub_D_idx;
-    //bool m_is_lane_add{false};
-    // size_t m_sub_npixels;
     size_t m_dimension;     // nrows or ncols of the current level
     size_t m_npixels;       //total number of pixels
     size_t m_npixels_agg;   //total number of pixels in a lower scale
     size_t m_dimension_agg; //half the current dimension
-    //size_t m_half_npixels;  //total number of pixels in the row-interleaved image
-    /*Pre-computed arrays*/
-    //AlignedFreeUniquePtr<bool[]> m_row_to_col_interleaved_flag;
-    // std::vector<bool> m_row_to_col_interleaved_flag; //alternating true false array to extract col interleaved pixels from the row-interleaved sum
-    // std::vector<size_t> m_row_to_col_indices;        //every two  elements have the same value. Used to slice the row-interleaved sum
-    // std::vector<size_t> m_row_interleaved_indices;   //0-to-m_half_npixels index array
-    //std::vector<size_t> m_agg_indices;          //0-to-m_npixels_agg index array
-    //std::vector<size_t> m_curr_map_agg_indices; //each element specifies its correspoinding index in the agg map
-    //std::vector<size_t> m_curr_map_indices;     //0-to-m_npixels index array
     float& m_alpha;
 
   private:
@@ -635,7 +601,7 @@ class MultiScaleLevelMap
 class MultiScaleMap
 {
   public:
-    MultiScaleMap(size_t t_power,float *t_alpha_vals,float t_kap1,float t_kap2,float t_kap3,float t_ttlcnt_pr,float t_ttlcnt_exp);
+    MultiScaleMap(size_t t_power, float* t_alpha_vals, float t_kap1, float t_kap2, float t_kap3, float t_ttlcnt_pr, float t_ttlcnt_exp);
     MultiScaleLevelMap& get_level(int level);
     size_t get_nlevels() const;
     void set_alpha(size_t level, float t_value);
@@ -650,7 +616,7 @@ class MultiScaleMap
     float get_ttlcnt_exp() const;
     float get_al_kap2() const;
     float get_log_prior_n_levels(bool t_lt_flag /*True=> log transform pixels, False=> no log transform*/);
-    void set_init_level_map(CountsMap &t_src);
+    void set_init_level_map(CountsMap& t_src);
 
   protected:
     size_t m_nlevels;
@@ -710,7 +676,7 @@ class AsyncImgIO : public AsyncFileIO<AsyncImgIO>
 class Ops
 {
   public:
-    static float comp_ms_prior(CountsMap &t_src,MultiScaleMap &t_ms);
+    static float comp_ms_prior(CountsMap& t_src, MultiScaleMap& t_ms);
     static void redistribute_counts(PSF& t_psf, CountsMap& t_deblur, CountsMap& t_obs, llikeType& t_llike);
 
     static void remove_bkg_from_data(CountsMap& t_deblur, CountsMap& t_src, CountsMap& t_bkg, const scalemodelType& bkg_scale);
@@ -719,14 +685,12 @@ class Ops
 
     static void check_monotone_convergence();
 
-    static float update_image_ms(AsyncParamFileIO& t_param_file, const ExpMap& t_expmap, CountsMap& t_src, MultiScaleMap& t_ms,Config &t_config);
+    static float update_image_ms(AsyncParamFileIO& t_param_file, const ExpMap& t_expmap, CountsMap& t_src, MultiScaleMap& t_ms, Config& t_config);
     static void update_alpha_ms(AsyncParamFileIO& t_out_file, MultiScaleMap& t_ms);
 
     static float update_alpha_ms_MH(const float& t_prop_mean, MultiScaleMap& t_ms, const size_t& t_level);
 
-    static void update_scale_model(scalemodelType &t_scl_mdl,ExpMap &t_expmap,CountsMap &t_bkg_map);
-
-    // static float update_alpha_ms_MH(const float& t_prop_mean, MultiScaleMap& t_ms, const size_t& t_level);
+    static void update_scale_model(scalemodelType& t_scl_mdl, ExpMap& t_expmap, CountsMap& t_bkg_map);
 
     template<typename D, int Pow4>
     static float dnlpost_alpha(D t_dfunc, const float& t_alpha, MultiScaleMap& t_ms, const size_t& t_level)
@@ -749,9 +713,7 @@ class Ops
 
     static float lpost_lalpha(float& t_alpha, MultiScaleMap& t_ms, const size_t& t_level);
 
-    static void update_deblur_image(ExpMap & t_expmap,CountsMap &t_deblur,CountsMap & t_src,CountsMap &t_bkg,const scalemodelType &bkg_scale);
-
-
+    static void update_deblur_image(ExpMap& t_expmap, CountsMap& t_deblur, CountsMap& t_src, CountsMap& t_bkg, const scalemodelType& bkg_scale);
 };
 
 SEXP
@@ -820,7 +782,7 @@ bayes_image_analysis(
   float* t_post_mean,
   AsyncImgIO& t_out_file,
   AsyncParamFileIO& t_param_file,
-  Config &t_conf,
+  Config& t_conf,
   PSF& t_psf,
   ExpMap& t_expmap,
   CountsMap& t_obs,
