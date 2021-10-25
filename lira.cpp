@@ -530,8 +530,7 @@ class MultiScaleLevelMap
 
         //d_func can be lgammafn, digamma, trigamma
         if (m_dimension > 1 && m_curr_sub_maps[0].get()[0] != m_current_map.get()[0]) {
-            std::cout << "wth!" << std::endl;
-            throw("The current map or sub maps are not up to date");
+            throw(std::string("The current map or sub maps are not up to date"));
         }
         //__PAR__
         for (size_t i = 0; i < m_npixels; ++i) {
@@ -1082,7 +1081,7 @@ PSF<uPtr_F, tagF>::initialize()
         }
         m_min_psf = val;
         if (val == -1) {
-            throw("The input PSF has no non-zero pixel!");
+            throw(std::string("The input PSF has no non-zero pixels!"));
         }
         std::transform(m_mat.get(), m_mat.get() + m_npixels, m_mat.get(), [&](auto a) { return a / m_min_psf; });
         std::reverse(m_mat.get(), m_mat.get() + m_npixels); //this can resampled and copied in to r_mat
@@ -2353,6 +2352,7 @@ template<class T, class Tv>
 void
 write_img(CountsMap<T, Tv>& map, int s = 5)
 {
+    #ifdef VERBOSE
     std::ofstream out;
     auto dim = map.get_dim();
     auto& img = map.get_img_map();
@@ -2363,12 +2363,14 @@ write_img(CountsMap<T, Tv>& map, int s = 5)
         std::cout << '\n';
     }
     std::cout << std::endl;
+    #endif 
 }
 
 template<class T, class Tv>
 void
 write_data(CountsMap<T, Tv>& map, int s = 5)
 {
+    #ifdef VERBOSE
     auto dim = map.get_dim();
     auto& img = map.get_data_map();
     for (auto i = 0; i < dim / s; ++i) {
@@ -2378,6 +2380,7 @@ write_data(CountsMap<T, Tv>& map, int s = 5)
         std::cout << '\n';
     }
     std::cout << std::endl;
+    #endif
 }
 
 template<class T, class Tv, class vecF, class tagF>
@@ -2464,7 +2467,7 @@ image_analysis_R(
     } catch (const std::string& e) {
         std::cout << e;
         out_param_file << e;
-    }
+    } 
 }
 
 template<class vecF, class tagF, class T, class Tv>
