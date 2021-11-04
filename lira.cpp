@@ -1,6 +1,6 @@
 
 #undef HWY_TARGET_INCLUDE
-#define HWY_TARGET_INCLUDE "/home/batman/CfA/cpp_tut/lira.cpp"
+#define HWY_TARGET_INCLUDE _LIRA_SIMD_CPP_FILE_
 #include "hwy/foreach_target.h"
 #include "hwy/highway.h"
 
