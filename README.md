@@ -1,17 +1,20 @@
-# LIRA  (SIMD version)
+LIRA  (SIMD version)
+====================
 
 Low-count Image Reconstruction and Analysis 
 
 
 
 ## What's new
-[LIRA](https://github.com/astrostat/LIRA/)'s C code is re-written in C++ with SIMD (Single Instruction, Multiple Data)intrinsics from Google's [highway](https://github.com/google/highway/) library for improved speed. Depending on the processor, the speed gains can be at least 3x-4x. In addition, the following new options can be set:
-* Re-sample the PSF from the original input once every `n` iterations
-* Switch the working precision between float/double. Note: For larger input sizes, setting a lower precision can increase the speed even further.
+[LIRA](https://github.com/astrostat/LIRA/)'s C code is re-written in C++ with SIMD (Single Instruction, Multiple Data) intrinsics using Google's [highway](https://github.com/google/highway/) library for improved speed. Depending on the processor, the speed gains can range from 3x-4x. Additionally, the working precision can be switched from double to float, which can improve the speed even further on larger images.
 * Planned updates
-  * Create R and Python packages.
+  * R and ~~python~~ packages.
   * Introduce OpenMP directives for computationally expensive loops.
+  * Ability to introduce a new PSF once every `n` iterations.
+  * Multi-PSF (e.g., energy-based) reconstruction,
 
+### [New] Python package
+[pylira_simd](https://github.com/infinitron/pylira_simd)
 
 ## Build instructions
 ### R
