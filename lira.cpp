@@ -385,13 +385,13 @@ class PSF : public ImgMap
     uPtr_F m_rmat{ nullptr };                      //reversed PSF array for convolution, a.k.a 180 deg CCW rotated 2D matrix
     size_t m_L{ 0 }, m_R{ 0 }, m_U{ 0 }, m_D{ 0 }; //For compatibility with the previous code. Not implemented here.
     bool is_psf_prag_bayesian{ false };            //By default uses the same PSF for all the iterations
-    Config* m_config{ nullptr };
+    const Config* m_config{ nullptr };
     pix_type m_min_psf; //minimum pixel value in the renormalized psf
 
   private:
     const double* m_mat_holder; //temporary storage before initialization checks
   public:
-    PSF(size_t t_nrows, size_t t_ncols, const double* t_psf_mat, std::string t_name, Config* t_config = nullptr)
+    PSF(size_t t_nrows, size_t t_ncols, const double* t_psf_mat, std::string t_name, const Config* t_config = nullptr)
       : ImgMap{ t_nrows, t_ncols, MapType::PSF, t_name }
       , m_config(t_config)
       , m_mat_holder(t_psf_mat)
@@ -410,6 +410,9 @@ class PSF : public ImgMap
     const uPtr_F& get_rmat();
     uPtr_F& get_inv();
     void normalize_inv(pix_type sum);
+    ~PSF(){
+        m_inv.release();
+    }
 };
 
 template<class uPtr_F, class tagF>
@@ -1636,7 +1639,7 @@ MultiScaleMap<uPtr_F, uPtr_Fv, tagF>::MultiScaleMap(size_t t_power2, double* t_a
     m_alpha.push_back(0.0); //alpha on the 1-pixel level. unused anywhere in the code. For consistency with the level map class
 
     //init ms level maps
-    for (size_t i = 1; i <= m_nlevels; ++i) {
+    for (size_t i = 1; i <= m_nlevels; ++i) {   
         m_level_maps.push_back(std::move(MultiScaleLevelMap<uPtr_F, uPtr_Fv, tagF>(pow(2, m_nlevels - i), m_alpha[i - 1])));
     }
 }
