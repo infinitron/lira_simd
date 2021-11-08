@@ -35,6 +35,8 @@
 #include <iomanip>
 #include <stdlib.h>
 #include <typeinfo>
+#include <cstdlib> 
+#include <ctime> 
 
 //#define VERBOSE
 
@@ -2438,11 +2440,11 @@ bayes_image_analysis(
   llikeType& t_llike,
   scalemodelType& t_bkg_scale)
 {
-
-    //set_seed(123, 456);
-    size_t npixels = t_obs.get_npixels();
     /* Initlaize the R Random seed */
-    GetRNGstate();
+    std::srand(static_cast<unsigned int>(std::time(nullptr)));
+    set_seed(std::rand(), std::rand());
+    size_t npixels = t_obs.get_npixels();
+    //GetRNGstate();
     //compute_expmap() => because wrapping is the only behaviour pr=map
     t_llike.cur = Ops::comp_ms_prior(t_src, t_ms);
 
@@ -2501,7 +2503,7 @@ bayes_image_analysis(
             }
         }
     }
-    PutRNGstate();
+    //PutRNGstate();
 }
 
 SEXP
