@@ -391,7 +391,7 @@ class PSF : public ImgMap
   private:
     const double* m_mat_holder; //temporary storage before initialization checks
   public:
-    PSF(size_t t_nrows, size_t t_ncols, double* const& t_psf_mat, std::string t_name, const Config* t_config = nullptr)
+    PSF(size_t t_nrows, size_t t_ncols, double* const& t_psf_mat, std::string t_name, Config* const& t_config)
       : ImgMap{ t_nrows, t_ncols, MapType::PSF, t_name }
       , m_config(t_config)
       , m_mat_holder(t_psf_mat)
@@ -407,12 +407,13 @@ class PSF : public ImgMap
     PSF& operator=(const PSF&) = delete;
 
     PSF& initialize();
+    void update_psf(const prag_bayes_psf_func& t_upd_func);
 
-    const uPtr_F& get_rmat();
+    uPtr_F& get_rmat();
     uPtr_F& get_inv();
     void normalize_inv(pix_type sum);
     ~PSF()
-    {        
+    {
         m_inv.release();
     }
 };
@@ -455,7 +456,7 @@ class CountsMap : public ImgMap
     using pix_type = typename std::pointer_traits<uPtr_F>::element_type;
 
   public:
-    CountsMap(size_t t_nrows, size_t t_ncols, CountsMapDataType t_map_data_type, std::string t_name, double* const &t_map = nullptr)
+    CountsMap(size_t t_nrows, size_t t_ncols, CountsMapDataType t_map_data_type, std::string t_name, double* const& t_map = nullptr)
       : ImgMap(t_nrows, t_ncols, MapType::COUNTS, t_name)
       , m_map_holder(t_map)
       , map_data_type(t_map_data_type)
@@ -767,7 +768,7 @@ image_analysis_R(
   double* ms_al_kap2,
   double* ms_al_kap1,
   double* ms_al_kap3,
-  int *use_prag_bayes_psf,
+  int* use_prag_bayes_psf,
   const prag_bayes_psf_func& t_psf_func);
 
 template<class vecF, class tagF, class T, class Tv>
@@ -1073,15 +1074,29 @@ PSF<uPtr_F, tagF>::initialize()
     }
     return *this;
 }
+template<class uPtr_F, class tagF>
+void
+PSF<uPtr_F, tagF>::update_psf(const prag_bayes_psf_func& t_upd_func)
+{
+    if (is_psf_prag_bayesian) {
+        const auto* new_psf = t_upd_func(this->m_config->iter);
+        if (new_psf != nullptr) {
+            std::copy(new_psf, new_psf + m_npixels, m_mat.get());
+
+            //normalize the psf
+            auto sum = std::reduce(m_mat.get(), m_mat.get() + m_npixels, 0.0, std::plus<pix_type>());
+            std::transform(m_mat.get(), m_mat.get() + m_npixels, m_mat.get(), [&](auto a) { return a / sum; });
+
+            //reverse the psf array for use in convolution
+            std::reverse_copy(m_mat.get(), m_mat.get() + m_npixels, m_rmat.get());
+        }
+    }
+}
 
 template<class uPtr_F, class tagF>
-const uPtr_F&
+uPtr_F&
 PSF<uPtr_F, tagF>::get_rmat()
 {
-    if (is_psf_prag_bayesian && m_config->iter % Constants::N_ITER_PER_PSF == 0) {
-
-        //TODO
-    }
     return m_rmat;
 }
 
@@ -2419,7 +2434,7 @@ image_analysis_R(
     AsyncParamFileIO<T, Tv, tagF> out_param_file(*t_param_filename, exp_map, ms_map, conf);
     try {
         {
-            bayes_image_analysis<vecF>(t_outmap, t_post_mean, out_img_file, out_param_file, conf, psf_map, exp_map, obs_map, deblur_map, src_map, bkg_map, ms_map, llike, bkg_scale,t_psf_func);
+            bayes_image_analysis<vecF>(t_outmap, t_post_mean, out_img_file, out_param_file, conf, psf_map, exp_map, obs_map, deblur_map, src_map, bkg_map, ms_map, llike, bkg_scale, t_psf_func);
         }
     } catch (const InvalidParams& e) {
         std::cout << "\n"
@@ -2478,8 +2493,7 @@ bayes_image_analysis(
             t_param_file << "\n"
                          << t_conf.iter;
         }
-        const auto pg_psf = t_psf_func(t_conf.iter);
-
+        t_psf.update_psf(t_psf_func);
         /********************************************************************/
         /*********    REDISTRIBUTE obs.data to deblur.data            *******/
         /*********    SEPERATE deblur.data into src.data and bkg.data *******/
@@ -2601,7 +2615,7 @@ image_analysis_R_export(
 
         TempDS<uPtr_F> d;
 
-        image_analysis_R<uPtr_F, uPtr_Fv, vecF, tagF>(t_outmap, t_post_mean, t_cnt_vector, t_src_vector, t_psf_vector, t_map_vector, t_bkg_vector, t_out_filename, t_param_filename, t_max_iter, t_burn, t_save_iters, t_save_thin, t_nrow, t_ncol, t_nrow_psf, t_ncol_psf, t_em, t_fit_bkg_scl, t_alpha_init, t_alpha_init_len, t_ms_ttlcnt_pr, t_ms_ttlcnt_exp, t_ms_al_kap2, t_ms_al_kap1, t_ms_al_kap3, is_psf_prag_bayesian,t_psf_func);
+        image_analysis_R<uPtr_F, uPtr_Fv, vecF, tagF>(t_outmap, t_post_mean, t_cnt_vector, t_src_vector, t_psf_vector, t_map_vector, t_bkg_vector, t_out_filename, t_param_filename, t_max_iter, t_burn, t_save_iters, t_save_thin, t_nrow, t_ncol, t_nrow_psf, t_ncol_psf, t_em, t_fit_bkg_scl, t_alpha_init, t_alpha_init_len, t_ms_ttlcnt_pr, t_ms_ttlcnt_exp, t_ms_al_kap2, t_ms_al_kap1, t_ms_al_kap3, is_psf_prag_bayesian, t_psf_func);
     } else {
 
         using T = double;
@@ -2612,7 +2626,7 @@ image_analysis_R_export(
 
         TempDS<uPtr_F> d;
 
-        image_analysis_R<uPtr_F, uPtr_Fv, vecF, tagF>(t_outmap, t_post_mean, t_cnt_vector, t_src_vector, t_psf_vector, t_map_vector, t_bkg_vector, t_out_filename, t_param_filename, t_max_iter, t_burn, t_save_iters, t_save_thin, t_nrow, t_ncol, t_nrow_psf, t_ncol_psf, t_em, t_fit_bkg_scl, t_alpha_init, t_alpha_init_len, t_ms_ttlcnt_pr, t_ms_ttlcnt_exp, t_ms_al_kap2, t_ms_al_kap1, t_ms_al_kap3, is_psf_prag_bayesian,t_psf_func);
+        image_analysis_R<uPtr_F, uPtr_Fv, vecF, tagF>(t_outmap, t_post_mean, t_cnt_vector, t_src_vector, t_psf_vector, t_map_vector, t_bkg_vector, t_out_filename, t_param_filename, t_max_iter, t_burn, t_save_iters, t_save_thin, t_nrow, t_ncol, t_nrow_psf, t_ncol_psf, t_em, t_fit_bkg_scl, t_alpha_init, t_alpha_init_len, t_ms_ttlcnt_pr, t_ms_ttlcnt_exp, t_ms_al_kap2, t_ms_al_kap1, t_ms_al_kap3, is_psf_prag_bayesian, t_psf_func);
     }
 }
 
