@@ -32,12 +32,11 @@
 #include "hwy/base.h"
 #include "hwy/highway.h"
 #include <cmath>
+#include <cstdlib>
+#include <ctime>
 #include <iomanip>
 #include <stdlib.h>
 #include <typeinfo>
-#include <cstdlib> 
-#include <ctime> 
-
 //#define VERBOSE
 
 HWY_BEFORE_NAMESPACE();
@@ -45,6 +44,7 @@ namespace hwy {
 namespace HWY_NAMESPACE {
 
 typedef std::stringstream sstr;
+using prag_bayes_psf_func = std::function<double*(int)>;
 
 template<class T>
 void
@@ -403,6 +403,7 @@ class PSF : public ImgMap
     }
 
     PSF(const PSF&) = delete;
+    PSF() = delete;
     PSF& operator=(const PSF&) = delete;
 
     PSF& initialize();
@@ -410,7 +411,8 @@ class PSF : public ImgMap
     const uPtr_F& get_rmat();
     uPtr_F& get_inv();
     void normalize_inv(pix_type sum);
-    ~PSF(){
+    ~PSF()
+    {        
         m_inv.release();
     }
 };
@@ -755,7 +757,9 @@ image_analysis_R(
   double* ms_ttlcnt_exp,
   double* ms_al_kap2,
   double* ms_al_kap1,
-  double* ms_al_kap3);
+  double* ms_al_kap3,
+  int *use_prag_bayes_psf,
+  const prag_bayes_psf_func& t_psf_func);
 
 template<class vecF, class tagF, class T, class Tv>
 void
@@ -773,7 +777,8 @@ bayes_image_analysis(
   CountsMap<T, Tv>& t_bkg,
   MultiScaleMap<T, Tv, tagF>& t_ms,
   llikeType& llike,
-  scalemodelType& bkg_scale);
+  scalemodelType& bkg_scale,
+  const prag_bayes_psf_func& t_psf_func);
 
 /** To export the main analysis function outside HWY_NAMESPACE**/
 void
@@ -805,7 +810,8 @@ image_analysis_R_export(
   double* t_ms_al_kap1,
   double* t_ms_al_kap3,
   int* t_use_float,
-  int* is_psf_prag_bayesian);
+  int* is_psf_prag_bayesian,
+  const prag_bayes_psf_func& t_psf_func);
 
 }
 }
@@ -956,7 +962,7 @@ ImgMap::check_sizes()
     }
 
     if (m_map_type == MapType::PSF && m_nrows % 2 == 0) {
-        std::cout << "Warning: The PSF must have an odd dimension to allow the maximum to be exactly at the center of the image" << std::endl;
+        std::cout << "Warning: The PSF must have an odd dimension to allow the maximum to be exactly at the center of the image." << std::endl;
     }
 
     if (m_map_type != MapType::PSF && (m_nrows == 0 || (m_nrows & (m_nrows - 1)) || m_nrows < 8)) {
@@ -1056,7 +1062,6 @@ PSF<uPtr_F, tagF>::initialize()
     if (is_psf_prag_bayesian) { //rescale the original PSF with its min value and reverse it
         //TODO
     }
-
     return *this;
 }
 
@@ -1639,7 +1644,7 @@ MultiScaleMap<uPtr_F, uPtr_Fv, tagF>::MultiScaleMap(size_t t_power2, double* t_a
     m_alpha.push_back(0.0); //alpha on the 1-pixel level. unused anywhere in the code. For consistency with the level map class
 
     //init ms level maps
-    for (size_t i = 1; i <= m_nlevels; ++i) {   
+    for (size_t i = 1; i <= m_nlevels; ++i) {
         m_level_maps.push_back(std::move(MultiScaleLevelMap<uPtr_F, uPtr_Fv, tagF>(pow(2, m_nlevels - i), m_alpha[i - 1])));
     }
 }
@@ -2364,7 +2369,8 @@ image_analysis_R(
   double* t_ms_al_kap2,
   double* t_ms_al_kap1,
   double* t_ms_al_kap3,
-  int* t_is_psf_prag_bayesian)
+  int* t_is_psf_prag_bayesian,
+  const prag_bayes_psf_func& t_psf_func)
 {
 
     Config conf(*t_max_iter, *t_burn, *t_save_iters, *t_save_thin, *t_fit_bkg_scl, *t_is_psf_prag_bayesian);
@@ -2404,7 +2410,7 @@ image_analysis_R(
     AsyncParamFileIO<T, Tv, tagF> out_param_file(*t_param_filename, exp_map, ms_map, conf);
     try {
         {
-            bayes_image_analysis<vecF>(t_outmap, t_post_mean, out_img_file, out_param_file, conf, psf_map, exp_map, obs_map, deblur_map, src_map, bkg_map, ms_map, llike, bkg_scale);
+            bayes_image_analysis<vecF>(t_outmap, t_post_mean, out_img_file, out_param_file, conf, psf_map, exp_map, obs_map, deblur_map, src_map, bkg_map, ms_map, llike, bkg_scale,t_psf_func);
         }
     } catch (const InvalidParams& e) {
         std::cout << "\n"
@@ -2423,6 +2429,7 @@ image_analysis_R(
                   << e;
         out_param_file << e;
     }
+    std::cout<<"Done running\n";
 }
 
 template<class vecF, class tagF, class T, class Tv>
@@ -2441,7 +2448,8 @@ bayes_image_analysis(
   CountsMap<T, Tv>& t_bkg,
   MultiScaleMap<T, Tv, tagF>& t_ms,
   llikeType& t_llike,
-  scalemodelType& t_bkg_scale)
+  scalemodelType& t_bkg_scale,
+  const prag_bayes_psf_func& t_psf_func)
 {
     /* Initlaize the R Random seed */
     std::srand(static_cast<unsigned int>(std::time(nullptr)));
@@ -2462,6 +2470,7 @@ bayes_image_analysis(
             t_param_file << "\n"
                          << t_conf.iter;
         }
+        const auto pg_psf = t_psf_func(t_conf.iter);
 
         /********************************************************************/
         /*********    REDISTRIBUTE obs.data to deblur.data            *******/
@@ -2572,8 +2581,10 @@ image_analysis_R_export(
   double* t_ms_al_kap1,
   double* t_ms_al_kap3,
   int* t_use_float,
-  int* is_psf_prag_bayesian)
+  int* is_psf_prag_bayesian,
+  const prag_bayes_psf_func& t_psf_func)
 {
+    t_psf_func(1000);
     if (t_use_float[0] == 1) {
         // std::cout<<"Using float\n";
         using T = float;
@@ -2584,7 +2595,7 @@ image_analysis_R_export(
 
         TempDS<uPtr_F> d;
 
-        image_analysis_R<uPtr_F, uPtr_Fv, vecF, tagF>(t_outmap, t_post_mean, t_cnt_vector, t_src_vector, t_psf_vector, t_map_vector, t_bkg_vector, t_out_filename, t_param_filename, t_max_iter, t_burn, t_save_iters, t_save_thin, t_nrow, t_ncol, t_nrow_psf, t_ncol_psf, t_em, t_fit_bkg_scl, t_alpha_init, t_alpha_init_len, t_ms_ttlcnt_pr, t_ms_ttlcnt_exp, t_ms_al_kap2, t_ms_al_kap1, t_ms_al_kap3, is_psf_prag_bayesian);
+        image_analysis_R<uPtr_F, uPtr_Fv, vecF, tagF>(t_outmap, t_post_mean, t_cnt_vector, t_src_vector, t_psf_vector, t_map_vector, t_bkg_vector, t_out_filename, t_param_filename, t_max_iter, t_burn, t_save_iters, t_save_thin, t_nrow, t_ncol, t_nrow_psf, t_ncol_psf, t_em, t_fit_bkg_scl, t_alpha_init, t_alpha_init_len, t_ms_ttlcnt_pr, t_ms_ttlcnt_exp, t_ms_al_kap2, t_ms_al_kap1, t_ms_al_kap3, is_psf_prag_bayesian,t_psf_func);
     } else {
 
         using T = double;
@@ -2595,7 +2606,7 @@ image_analysis_R_export(
 
         TempDS<uPtr_F> d;
 
-        image_analysis_R<uPtr_F, uPtr_Fv, vecF, tagF>(t_outmap, t_post_mean, t_cnt_vector, t_src_vector, t_psf_vector, t_map_vector, t_bkg_vector, t_out_filename, t_param_filename, t_max_iter, t_burn, t_save_iters, t_save_thin, t_nrow, t_ncol, t_nrow_psf, t_ncol_psf, t_em, t_fit_bkg_scl, t_alpha_init, t_alpha_init_len, t_ms_ttlcnt_pr, t_ms_ttlcnt_exp, t_ms_al_kap2, t_ms_al_kap1, t_ms_al_kap3, is_psf_prag_bayesian);
+        image_analysis_R<uPtr_F, uPtr_Fv, vecF, tagF>(t_outmap, t_post_mean, t_cnt_vector, t_src_vector, t_psf_vector, t_map_vector, t_bkg_vector, t_out_filename, t_param_filename, t_max_iter, t_burn, t_save_iters, t_save_thin, t_nrow, t_ncol, t_nrow_psf, t_ncol_psf, t_em, t_fit_bkg_scl, t_alpha_init, t_alpha_init_len, t_ms_ttlcnt_pr, t_ms_ttlcnt_exp, t_ms_al_kap2, t_ms_al_kap1, t_ms_al_kap3, is_psf_prag_bayesian,t_psf_func);
     }
 }
 
@@ -2605,8 +2616,9 @@ image_analysis_R_export(
 HWY_AFTER_NAMESPACE();
 
 #if HWY_ONCE
-
 namespace hwy {
+using prag_bayes_psf_func = std::function<double*(int)>;
+
 HWY_EXPORT(image_analysis_R_export);
 extern "C"
 {
@@ -2639,10 +2651,11 @@ extern "C"
       double* t_ms_al_kap1,
       double* t_ms_al_kap3,
       int* t_use_float,
-      int* is_psf_prag_bayesian)
+      int* is_psf_prag_bayesian,
+      const prag_bayes_psf_func& t_psf_func)
     {
         HWY_DYNAMIC_DISPATCH(image_analysis_R_export)
-        (t_outmap, t_post_mean, t_cnt_vector, t_src_vector, t_psf_vector, t_map_vector, t_bkg_vector, t_out_filename, t_param_filename, t_max_iter, t_burn, t_save_iters, t_save_thin, t_nrow, t_ncol, t_nrow_psf, t_ncol_psf, t_em, t_fit_bkg_scl, t_alpha_init, t_alpha_init_len, t_ms_ttlcnt_pr, t_ms_ttlcnt_exp, t_ms_al_kap2, t_ms_al_kap1, t_ms_al_kap3, t_use_float, is_psf_prag_bayesian);
+        (t_outmap, t_post_mean, t_cnt_vector, t_src_vector, t_psf_vector, t_map_vector, t_bkg_vector, t_out_filename, t_param_filename, t_max_iter, t_burn, t_save_iters, t_save_thin, t_nrow, t_ncol, t_nrow_psf, t_ncol_psf, t_em, t_fit_bkg_scl, t_alpha_init, t_alpha_init_len, t_ms_ttlcnt_pr, t_ms_ttlcnt_exp, t_ms_al_kap2, t_ms_al_kap1, t_ms_al_kap3, t_use_float, is_psf_prag_bayesian, t_psf_func);
     }
 }
 }
