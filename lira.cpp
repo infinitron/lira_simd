@@ -391,7 +391,7 @@ class PSF : public ImgMap
   private:
     const double* m_mat_holder; //temporary storage before initialization checks
   public:
-    PSF(size_t t_nrows, size_t t_ncols, const double* t_psf_mat, std::string t_name, const Config* t_config = nullptr)
+    PSF(size_t t_nrows, size_t t_ncols, double* const& t_psf_mat, std::string t_name, const Config* t_config = nullptr)
       : ImgMap{ t_nrows, t_ncols, MapType::PSF, t_name }
       , m_config(t_config)
       , m_mat_holder(t_psf_mat)
@@ -429,7 +429,7 @@ class ExpMap : public ImgMap
     size_t max_levels{ 1 };
 
   public:
-    ExpMap(size_t t_nrows, size_t t_ncols, const double* t_expmap, std::string t_name)
+    ExpMap(size_t t_nrows, size_t t_ncols, double* const& t_expmap, std::string t_name)
       : m_mat_holder(t_expmap)
       , ImgMap(t_nrows, t_ncols, MapType::EXP, t_name)
     {
@@ -455,7 +455,16 @@ class CountsMap : public ImgMap
     using pix_type = typename std::pointer_traits<uPtr_F>::element_type;
 
   public:
-    CountsMap(size_t t_nrows, size_t t_ncols, CountsMapDataType t_map_data_type, std::string t_name, double* t_map = nullptr)
+    CountsMap(size_t t_nrows, size_t t_ncols, CountsMapDataType t_map_data_type, std::string t_name, double* const &t_map = nullptr)
+      : ImgMap(t_nrows, t_ncols, MapType::COUNTS, t_name)
+      , m_map_holder(t_map)
+      , map_data_type(t_map_data_type)
+    {
+        initialize();
+    }
+
+    //overload the constructor to accept a nullptr
+    CountsMap(size_t t_nrows, size_t t_ncols, CountsMapDataType t_map_data_type, std::string t_name, std::nullptr_t t_map)
       : ImgMap(t_nrows, t_ncols, MapType::COUNTS, t_name)
       , m_map_holder(t_map)
       , map_data_type(t_map_data_type)
@@ -1920,8 +1929,8 @@ Ops::redistribute_counts(PSF<uPtr_F, tagF>& t_psf, CountsMap<uPtr_F, uPtr_Fv>& t
 
             if (sum == 0.0 && count > 0) {
                 std::cout << "not allowed\n";
-                return;
                 throw(InconsistentData(row, col)); //psf doesn't allow data in this pixel
+                return;
             }
 
             //update the log likelihood
@@ -2429,7 +2438,6 @@ image_analysis_R(
                   << e;
         out_param_file << e;
     }
-    std::cout<<"Done running\n";
 }
 
 template<class vecF, class tagF, class T, class Tv>
@@ -2584,9 +2592,7 @@ image_analysis_R_export(
   int* is_psf_prag_bayesian,
   const prag_bayes_psf_func& t_psf_func)
 {
-    t_psf_func(1000);
     if (t_use_float[0] == 1) {
-        // std::cout<<"Using float\n";
         using T = float;
         using uPtr_F = AlignedFreeUniquePtr<T[]>;
         using uPtr_Fv = AlignedFreeUniquePtr<T*[]>;
